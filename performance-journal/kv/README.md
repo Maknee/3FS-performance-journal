@@ -1,4 +1,10 @@
-# Pull the json files
+# Benchmarks
+
+Benchmark results are stored in [benchmarks](benchmarks/).
+
+# Running the benchmarks
+
+## Pull the json files
 
 ```sh
 wget https://github.com/kvcache-ai/Mooncake/raw/refs/heads/main/FAST25-release/traces/conversation_trace.jsonl
@@ -6,12 +12,16 @@ wget https://github.com/kvcache-ai/Mooncake/raw/refs/heads/main/FAST25-release/t
 wget https://github.com/kvcache-ai/Mooncake/raw/refs/heads/main/FAST25-release/traces/toolagent_trace.jsonl
 ```
 
-# Build
+## Build
 
+Include `libhf3fs_api_shared.so` here. You can find it in the built 3fs folder.
+
+```sh
 cmake -DCMAKE_CXX_COMPILER=clang++ -DCMAKE_C_COMPILER=clang -Bbuild -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cmake --build build -j
+```
 
-# Run
+## Running
 
 ./build/3fs_benchmark --jsonl toolagent_trace.jsonl -l /3fs/stage -o /3fs/stage/fuse/conv.test 
 ./build/3fs_benchmark --jsonl toolagent_trace.jsonl -l /3fs/stage -o /3fs/stage/fuse/conv.test --mode io_uring
