@@ -1,3 +1,7 @@
+# Fire-Flyer File System performance journal
+
+All benchmark code is stored in `performance-journal`. Some changes will be made in the `src` code for benchmarking.
+
 #  Fire-Flyer File System
 
 [![Build](https://github.com/deepseek-ai/3fs/actions/workflows/build.yml/badge.svg)](https://github.com/deepseek-ai/3fs/actions/workflows/build.yml)
