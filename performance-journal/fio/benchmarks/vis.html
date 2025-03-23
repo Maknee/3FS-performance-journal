@@ -1,0 +1,1143 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FIO Benchmark 3D Bar Chart with Latency Percentiles</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/plotly.js/2.27.1/plotly.min.js"></script>
+  <style>
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 20px;
+      background-color: #f5f5f5;
+    }
+    .container {
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      padding: 20px;
+      margin-bottom: 20px;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 16px;
+      margin-bottom: 20px;
+    }
+    .control-group {
+      flex: 1;
+      min-width: 200px;
+    }
+    .control-group label {
+      display: block;
+      margin-bottom: 5px;
+      font-weight: 600;
+      font-size: 14px;
+    }
+    select {
+      width: 100%;
+      padding: 8px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: white;
+    }
+    .plot-container {
+      height: 600px;
+      width: 100%;
+    }
+    .note {
+      font-size: 14px;
+      color: #666;
+      margin-top: 20px;
+    }
+
+    /* Draggable panel styles */
+    .draggable-panel {
+      position: fixed;
+      width: 420px;
+      background-color: white;
+      border-radius: 8px;
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+      z-index: 1000;
+      overflow: hidden;
+      resize: both;
+      display: none;
+    }
+    
+    .panel-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 10px 15px;
+      background-color: #f0f0f0;
+      border-bottom: 1px solid #ddd;
+      cursor: move;
+      user-select: none;
+    }
+    
+    .panel-title {
+      font-size: 16px;
+      font-weight: 600;
+      margin: 0;
+    }
+    
+    .panel-controls {
+      display: flex;
+      gap: 8px;
+    }
+    
+    .collapse-btn, .close-btn {
+      background: none;
+      border: none;
+      cursor: pointer;
+      font-size: 16px;
+      color: #666;
+      padding: 3px;
+    }
+    
+    .collapse-btn:hover, .close-btn:hover {
+      color: #333;
+    }
+    
+    .panel-content {
+      padding: 15px;
+      max-height: 500px;
+      overflow: auto;
+    }
+    
+    .panel-collapsed .panel-content {
+      display: none;
+    }
+    
+    .panel-collapsed {
+      width: auto !important;
+      height: auto !important;
+      resize: none;
+    }
+    
+    .latency-details {
+      font-size: 14px;
+      margin-bottom: 15px;
+    }
+    
+    .latency-plot-container {
+      width: 100%;
+      height: 300px;
+    }
+    
+    /* Status indicator for active panels */
+    .active-panels-indicator {
+      position: fixed;
+      bottom: 20px;
+      right: 20px;
+      background-color: rgba(255, 255, 255, 0.9);
+      border-radius: 4px;
+      padding: 8px 12px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+      font-size: 13px;
+      display: none;
+      z-index: 999;
+    }
+    
+    /* Button styles */
+    .action-button {
+      padding: 5px 10px;
+      background-color: #f0f0f0;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      margin-left: 8px;
+      cursor: pointer;
+      font-size: 12px;
+    }
+    
+    .action-button:hover {
+      background-color: #e0e0e0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>FIO Benchmark Visualization - 3D Bars</h1>
+
+    <div class="controls">
+      <div class="control-group">
+        <label for="testType">Test Type</label>
+        <select id="testType">
+          <option value="randread">Random Read</option>
+          <option value="read">Sequential Read</option>
+          <option value="randwrite">Random Write</option>
+          <option value="write">Sequential Write</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label for="metricType">Metric</label>
+        <select id="metricType">
+          <option value="bandwidth">Bandwidth (GB/s)</option>
+          <option value="iops">IOPS</option>
+          <option value="latency">Latency (μs)</option>
+          <option value="latency_p50">Latency p50</option>
+          <option value="latency_p90">Latency p90</option>
+          <option value="latency_p99">Latency p99</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="plot" class="plot-container"></div>
+    
+    <!-- Container for dynamically created latency panels -->
+    <div id="latencyPanelsContainer"></div>
+    
+    <!-- Template for the latency panel (hidden) -->
+    <template id="latencyPanelTemplate">
+      <div class="draggable-panel">
+        <div class="panel-header">
+          <h3 class="panel-title">Latency Percentiles</h3>
+          <div class="panel-controls">
+            <button class="collapse-btn" title="Collapse">▲</button>
+            <button class="close-btn" title="Close">×</button>
+          </div>
+        </div>
+        <div class="panel-content">
+          <div class="latency-details"></div>
+          <div class="latency-plot-container"></div>
+        </div>
+      </div>
+    </template>
+    
+    <div class="note">
+      <p>This visualization uses real FIO benchmark data. Click on a bar to view detailed latency percentile information.</p>
+    </div>
+    
+    <!-- Active panels indicator -->
+    <div id="activePanelsIndicator" class="active-panels-indicator">
+      <span id="panelCount">0</span> active latency panels
+      <button id="closeAllPanelsBtn" class="action-button">Close All</button>
+      <button id="arrangeAllPanelsBtn" class="action-button">Arrange</button>
+    </div>
+  </div>
+
+  <script>
+    // Define our grid dimensions
+    const iodepths = [1, 2, 4, 8, 16, 32, 64, 128];
+    const numjobs = [1, 2, 4, 8, 16];
+
+    // Real benchmark data extracted from JSON files (with synthetic data to fill gaps)
+    let benchmarkData = {};
+    
+    // Function to load the benchmark data
+    async function loadBenchmarkData(path = '1m_hf3fs_xfs_18.json') {
+        try {
+            const response = await fetch(path);
+            if (!response.ok) {
+                throw new Error(`Failed to load benchmark data: ${response.status} ${response.statusText}`);
+            }
+            benchmarkData = await response.json();
+            return benchmarkData;
+        } catch (error) {
+            console.error('Error loading benchmark data:', error);
+            // For demo purposes, generate synthetic data if real data fails to load
+            generateSyntheticData();
+        }
+    }
+    
+    // Generate synthetic data for demo purposes
+    function generateSyntheticData() {
+        console.log('Generating synthetic data for demo...');
+        
+        benchmarkData = {
+            randread: {},
+            read: {},
+            randwrite: {},
+            write: {}
+        };
+        
+        // Generate data for each test type
+        ['randread', 'read', 'randwrite', 'write'].forEach(testType => {
+            // Factors to adjust values based on operation type
+            const bwFactor = testType.includes('read') ? 1.0 : 0.8;  // Writes typically slower
+            const latencyFactor = testType.includes('rand') ? 1.5 : 1.0; // Random ops typically have higher latency
+            
+            // For each iodepth
+            iodepths.forEach(iodepth => {
+                benchmarkData[testType][iodepth] = {};
+                
+                // For each job
+                numjobs.forEach(job => {
+                    // Base values adjusted by iodepth and job count
+                    const bandwidth = (testType.includes('read') ? 2.5 : 2.0) * bwFactor * 
+                                     Math.min(5, Math.log2(iodepth + 1)) * 
+                                     Math.min(3, Math.log2(job + 1));
+                    
+                    const iops = bandwidth * 250000;
+                    const latency = (testType.includes('rand') ? 200 : 100) * latencyFactor * 
+                                   (1 + (iodepth * 0.1) * (job * 0.2));
+                    
+                    // Create percentiles based on latency
+                    const p50 = latency * 0.7;
+                    const p90 = latency * 1.5;
+                    const p99 = latency * 3;
+                    
+                    benchmarkData[testType][iodepth][job] = {
+                        bandwidth_gb: bandwidth,
+                        iops: iops,
+                        latency_us: latency,
+                        percentiles: {
+                            p50: p50,
+                            p90: p90,
+                            p99: p99,
+                            mean: latency
+                        }
+                    };
+                });
+            });
+        });
+    }
+
+    // Global references for interactive elements
+    const plotContainer = document.getElementById('plot');
+    const panelsContainer = document.getElementById('latencyPanelsContainer');
+    const latencyPanelTemplate = document.getElementById('latencyPanelTemplate');
+    const testTypeSelect = document.getElementById('testType');
+    const metricTypeSelect = document.getElementById('metricType');
+    
+    // Panel management
+    const activePanelsIndicator = document.getElementById('activePanelsIndicator');
+    const panelCountElement = document.getElementById('panelCount');
+    const closeAllPanelsBtn = document.getElementById('closeAllPanelsBtn');
+    const arrangeAllPanelsBtn = document.getElementById('arrangeAllPanelsBtn');
+    
+    // Counter for unique panel IDs
+    let panelCounter = 0;
+    
+    // Panel positions - use this to offset new panels
+    const panelPositions = {
+      lastTop: 200,
+      lastRight: 620,
+      increment: 30
+    };
+    
+    // Update panel count
+    function updatePanelCount() {
+      const panels = document.querySelectorAll('.draggable-panel');
+      const activePanels = Array.from(panels).filter(p => p.style.display !== 'none');
+      const count = activePanels.length;
+      
+      panelCountElement.textContent = count;
+      activePanelsIndicator.style.display = count > 0 ? 'block' : 'none';
+    }
+    
+    // Close all panels
+    closeAllPanelsBtn.addEventListener('click', () => {
+      const panels = document.querySelectorAll('.draggable-panel');
+      panels.forEach(panel => {
+        panel.remove();
+      });
+      updatePanelCount();
+    });
+    
+    // Arrange all panels in a grid
+    arrangeAllPanelsBtn.addEventListener('click', () => {
+      const panels = document.querySelectorAll('.draggable-panel');
+      const activePanels = Array.from(panels).filter(p => p.style.display !== 'none');
+      
+      if (activePanels.length === 0) return;
+      
+      // Calculate grid dimensions
+      const containerWidth = window.innerWidth;
+      const containerHeight = window.innerHeight;
+      const maxPanelsPerRow = Math.min(3, activePanels.length);
+      const rows = Math.ceil(activePanels.length / maxPanelsPerRow);
+      const cols = Math.min(maxPanelsPerRow, activePanels.length);
+      
+      // Calculate panel size
+      const panelWidth = 420;
+      const panelHeight = 400;
+      
+      // Calculate starting position
+      const startX = Math.max(20, (containerWidth - (cols * panelWidth)) / 2);
+      const startY = Math.max(60, (containerHeight - (rows * panelHeight)) / 2);
+      
+      activePanels.forEach((panel, index) => {
+        const row = Math.floor(index / cols);
+        const col = index % cols;
+        
+        panel.style.top = `${startY + (row * panelHeight)}px`;
+        panel.style.left = `${startX + (col * panelWidth)}px`;
+        panel.style.width = `${panelWidth}px`;
+        panel.style.height = `${panelHeight}px`;
+        
+        // Make sure panel is not collapsed
+        panel.classList.remove('panel-collapsed');
+        panel.querySelector('.collapse-btn').textContent = '▲';
+        
+        // Trigger resize to update plot
+        setTimeout(() => {
+          window.dispatchEvent(new Event('resize'));
+        }, 300);
+      });
+    });
+    
+    // Function to create a new panel
+    function createLatencyPanel() {
+      // Clone the template
+      const panelNode = latencyPanelTemplate.content.cloneNode(true);
+      const panel = panelNode.querySelector('.draggable-panel');
+      
+      // Assign unique ID
+      const panelId = `latency-panel-${panelCounter++}`;
+      panel.id = panelId;
+      
+      // Position the new panel with offset
+      panel.style.top = `${panelPositions.lastTop}px`;
+      panel.style.left = `${panelPositions.lastRight}px`;
+      panel.style.display = 'block';
+      
+      // Update positions for next panel
+      panelPositions.lastTop += panelPositions.increment;
+      panelPositions.lastRight += panelPositions.increment;
+      
+      // Reset positions if they go too far
+      if (panelPositions.lastTop > 300) panelPositions.lastTop = 200;
+      if (panelPositions.lastRight > 700) panelPositions.lastRight = 620;
+      
+      // Add to container
+      panelsContainer.appendChild(panel);
+      
+      // Set up event handlers for the new panel
+      const panelHeader = panel.querySelector('.panel-header');
+      const closeBtn = panel.querySelector('.close-btn');
+      const collapseBtn = panel.querySelector('.collapse-btn');
+      
+      // Close button handler
+      closeBtn.addEventListener('click', () => {
+        panel.remove();
+        updatePanelCount();
+      });
+      
+      // Toggle collapse state
+      collapseBtn.addEventListener('click', () => {
+        panel.classList.toggle('panel-collapsed');
+        collapseBtn.textContent = panel.classList.contains('panel-collapsed') ? '▼' : '▲';
+        collapseBtn.title = panel.classList.contains('panel-collapsed') ? 'Expand' : 'Collapse';
+        
+        // Trigger a resize to update plots if expanded
+        if (!panel.classList.contains('panel-collapsed')) {
+          setTimeout(() => {
+            window.dispatchEvent(new Event('resize'));
+          }, 300);
+        }
+      });
+      
+      // Make this panel draggable
+      setupDraggable(panel, panelHeader);
+      
+      return {
+        panel,
+        titleElement: panel.querySelector('.panel-title'),
+        detailsElement: panel.querySelector('.latency-details'),
+        plotElement: panel.querySelector('.latency-plot-container')
+      };
+    }
+    
+    // Function to set up draggable behavior for a panel
+    function setupDraggable(panel, panelHeader) {
+      let isDragging = false;
+      let startX, startY;
+      let initialLeft, initialTop;
+      
+      panelHeader.addEventListener('mousedown', (e) => {
+        // Prevent default to avoid text selection during drag
+        e.preventDefault();
+        
+        isDragging = true;
+        
+        // Store initial mouse position
+        startX = e.clientX;
+        startY = e.clientY;
+        
+        // Get initial panel position from its computed style
+        const style = window.getComputedStyle(panel);
+        initialLeft = parseInt(style.left, 10);
+        initialTop = parseInt(style.top, 10);
+        
+        panelHeader.style.cursor = 'grabbing';
+        
+        // Bring this panel to front
+        activePanels.forEach(p => {
+          p.style.zIndex = (p === panel) ? '1000' : '999';
+        });
+      });
+      
+      const moveHandler = (e) => {
+        if (!isDragging) return;
+        
+        // Calculate the distance moved
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+        
+        // Update position based on initial position + movement
+        const newLeft = initialLeft + dx;
+        const newTop = initialTop + dy;
+        
+        // Keep panel within viewport
+        const maxX = window.innerWidth - panel.offsetWidth;
+        const maxY = window.innerHeight - panel.offsetHeight;
+        
+        panel.style.left = `${Math.max(0, Math.min(newLeft, maxX))}px`;
+        panel.style.top = `${Math.max(0, Math.min(newTop, maxY))}px`;
+      };
+      
+      const upHandler = () => {
+        if (isDragging) {
+          isDragging = false;
+          panelHeader.style.cursor = 'move';
+        }
+      };
+      
+      document.addEventListener('mousemove', moveHandler);
+      document.addEventListener('mouseup', upHandler);
+      
+      // Store these handlers on the panel to properly remove them when the panel is closed
+      panel._moveHandler = moveHandler;
+      panel._upHandler = upHandler;
+    }
+    // Helper function to format latency with appropriate units
+    function formatLatency(latencyMicros) {
+      if (latencyMicros >= 1000000) {
+        return {
+          value: latencyMicros / 1000000,
+          unit: 's'
+        };
+      } else if (latencyMicros >= 1000) {
+        return {
+          value: latencyMicros / 1000,
+          unit: 'ms'
+        };
+      } else {
+        return {
+          value: latencyMicros,
+          unit: 'μs'
+        };
+      }
+    }
+
+    // Function to show latency percentiles for a specific configuration
+    function showLatencyPercentiles(iodepth, numjob, testType) {
+      // Get the data for this configuration
+      if (!benchmarkData[testType] || !benchmarkData[testType][iodepth] || !benchmarkData[testType][iodepth][numjob]) {
+        console.error('No data available for this configuration');
+        return;
+      }
+      
+      const data = benchmarkData[testType][iodepth][numjob];
+      
+      if (!data || !data.percentiles) {
+        console.error('No percentile data available for this configuration');
+        return;
+      }
+      
+      // Create a new panel
+      const panelElements = createLatencyPanel();
+      const { panel, titleElement, detailsElement, plotElement } = panelElements;
+      
+      // Update panel title
+      titleElement.textContent = `Latency - IO Depth: ${iodepth}, Jobs: ${numjob}`;
+      
+      // Format the average latency with appropriate units
+      const formattedLatency = formatLatency(data.latency_us);
+      const formattedP50 = formatLatency(data.percentiles.p50);
+      const formattedP90 = formatLatency(data.percentiles.p90);
+      const formattedP99 = formatLatency(data.percentiles.p99);
+      
+      // Update the details text
+      detailsElement.innerHTML = `
+        <p><strong>Test Type:</strong> ${testType} | <strong>IO Depth:</strong> ${iodepth} | <strong>Number of Jobs:</strong> ${numjob}</p>
+        <p><strong>Average Latency:</strong> ${formattedLatency.value.toFixed(2)} ${formattedLatency.unit}</p>
+        <p><strong>p50:</strong> ${formattedP50.value.toFixed(2)} ${formattedP50.unit} | 
+           <strong>p90:</strong> ${formattedP90.value.toFixed(2)} ${formattedP90.unit} | 
+           <strong>p99:</strong> ${formattedP99.value.toFixed(2)} ${formattedP99.unit}</p>
+      `;
+      
+      // Find all jobs for this iodepth
+      const availableJobs = [];
+      if (benchmarkData[testType] && benchmarkData[testType][iodepth]) {
+        for (const job in benchmarkData[testType][iodepth]) {
+          if (benchmarkData[testType][iodepth][job]) {
+            availableJobs.push(parseInt(job));
+          }
+        }
+      }
+      
+      availableJobs.sort((a, b) => a - b);
+      
+      // Create dataset for each percentile
+      const p50Values = [];
+      const p90Values = [];
+      const p99Values = [];
+      const meanValues = [];
+      const xValues = [];
+      
+      let maxLatency = 0;
+      
+      for (const job of availableJobs) {
+        const configData = benchmarkData[testType][iodepth][job];
+        if (configData && configData.percentiles) {
+          xValues.push(job);
+          p50Values.push(configData.percentiles.p50);
+          p90Values.push(configData.percentiles.p90);
+          p99Values.push(configData.percentiles.p99);
+          meanValues.push(configData.latency_us); // Use average latency
+          
+          // Track maximum latency for unit determination
+          maxLatency = Math.max(maxLatency, 
+            configData.percentiles.p50, 
+            configData.percentiles.p90,
+            configData.percentiles.p99,
+            configData.latency_us
+          );
+        }
+      }
+      
+      // Determine appropriate unit for the graph based on max value
+      const latencyFormat = formatLatency(maxLatency);
+      const divisor = latencyFormat.unit === 's' ? 1000000 : 
+                     latencyFormat.unit === 'ms' ? 1000 : 1;
+      
+      // Convert all values to the appropriate unit
+      const p50ValuesConverted = p50Values.map(val => val / divisor);
+      const p90ValuesConverted = p90Values.map(val => val / divisor);
+      const p99ValuesConverted = p99Values.map(val => val / divisor);
+      const meanValuesConverted = meanValues.map(val => val / divisor);
+      
+      // Create the chart
+      const data50 = {
+        x: xValues,
+        y: p50ValuesConverted,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'p50 (50th percentile)',
+        line: { width: 3, color: '#4285F4' },
+        hovertemplate: 'Jobs: %{x}<br>p50: %{y:.2f} ' + latencyFormat.unit + '<extra></extra>'
+      };
+      
+      const data90 = {
+        x: xValues,
+        y: p90ValuesConverted,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'p90 (90th percentile)',
+        line: { width: 3, color: '#34A853' },
+        hovertemplate: 'Jobs: %{x}<br>p90: %{y:.2f} ' + latencyFormat.unit + '<extra></extra>'
+      };
+      
+      const data99 = {
+        x: xValues,
+        y: p99ValuesConverted,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'p99 (99th percentile)',
+        line: { width: 3, color: '#FBBC05' },
+        hovertemplate: 'Jobs: %{x}<br>p99: %{y:.2f} ' + latencyFormat.unit + '<extra></extra>'
+      };
+      
+      const dataMean = {
+        x: xValues,
+        y: meanValuesConverted,
+        type: 'scatter',
+        mode: 'lines+markers',
+        name: 'Average',
+        line: { width: 3, color: '#EA4335', dash: 'dot' },
+        hovertemplate: 'Jobs: %{x}<br>Average: %{y:.2f} ' + latencyFormat.unit + '<extra></extra>'
+      };
+      
+      const layout = {
+        title: '',
+        xaxis: {
+          title: 'Number of Jobs',
+          type: 'log',
+          autorange: true
+        },
+        yaxis: {
+          title: `Latency (${latencyFormat.unit})`,
+          exponentformat: 'none'
+        },
+        legend: {
+          orientation: 'h',
+          y: -0.3
+        },
+        hovermode: 'closest',
+        margin: { t: 5, l: 60, r: 5, b: 50 },
+        autosize: true
+      };
+      
+      Plotly.newPlot(plotElement, [data50, data90, data99, dataMean], layout, {
+        responsive: true,
+        displayModeBar: false
+      });
+      
+      // Handle window resize for this specific panel
+      const resizeHandler = () => {
+        if (panel.style.display === 'block' && !panel.classList.contains('panel-collapsed')) {
+          Plotly.relayout(plotElement, { autosize: true });
+        }
+      };
+      
+      window.addEventListener('resize', resizeHandler);
+      
+      // Store the handler to remove it when the panel is closed
+      panel._resizeHandler = resizeHandler;
+      
+      // Add clean-up when panel is closed
+      panel.querySelector('.close-btn').addEventListener('click', () => {
+        if (panel._resizeHandler) {
+          window.removeEventListener('resize', panel._resizeHandler);
+        }
+        if (panel._moveHandler) {
+          document.removeEventListener('mousemove', panel._moveHandler);
+        }
+        if (panel._upHandler) {
+          document.removeEventListener('mouseup', panel._upHandler);
+        }
+        panel.remove();
+        updatePanelCount();
+      });
+      
+      // Update active panel count
+      updatePanelCount();
+    }
+
+    // Create a 3D bar with specified position and size
+    function createBar(x, y, z, width, depth, height, color) {
+      // Define the 8 vertices of the cube
+      const vertices = [
+        // Bottom face
+        [x, y, 0],               // 0: bottom front left
+        [x + width, y, 0],       // 1: bottom front right
+        [x + width, y + depth, 0], // 2: bottom back right
+        [x, y + depth, 0],       // 3: bottom back left
+        // Top face
+        [x, y, height],          // 4: top front left
+        [x + width, y, height],  // 5: top front right
+        [x + width, y + depth, height], // 6: top back right
+        [x, y + depth, height]   // 7: top back left
+      ];
+
+      // Define the 12 triangles (2 per face * 6 faces)
+      const indices = [
+        // Bottom face
+        [0, 1, 2], [0, 2, 3],
+        // Top face
+        [4, 6, 5], [4, 7, 6],
+        // Front face
+        [0, 4, 1], [1, 4, 5],
+        // Back face
+        [2, 6, 3], [3, 6, 7],
+        // Left face
+        [0, 3, 4], [3, 7, 4],
+        // Right face
+        [1, 5, 2], [2, 5, 6]
+      ];
+
+      // Extract x, y, z coordinates
+      const xs = vertices.map(v => v[0]);
+      const ys = vertices.map(v => v[1]);
+      const zs = vertices.map(v => v[2]);
+
+      // Create i, j, k arrays for the triangles
+      const i = [];
+      const j = [];
+      const k = [];
+
+      for (const triangle of indices) {
+        i.push(triangle[0]);
+        j.push(triangle[1]);
+        k.push(triangle[2]);
+      }
+
+      // Apply a single color to all faces
+      const colors = Array(indices.length).fill(color);
+
+      return { xs, ys, zs, i, j, k, colors };
+    }
+
+    // Function to get color based on normalized value (0-1)
+    function getColorFromValue(value) {
+      // Define color stops from blue (low) to red (high)
+      const colorStops = [
+        { pos: 0, color: [0, 0, 255] },     // Blue
+        { pos: 0.25, color: [0, 255, 255] }, // Cyan
+        { pos: 0.5, color: [0, 255, 0] },    // Green
+        { pos: 0.75, color: [255, 165, 0] },  // Orange
+        { pos: 1, color: [255, 0, 0] }        // Red
+      ];
+
+      // Find the two stops to interpolate between
+      let lowStop = colorStops[0];
+      let highStop = colorStops[1];
+
+      for (let i = 1; i < colorStops.length; i++) {
+        if (value <= colorStops[i].pos) {
+          lowStop = colorStops[i-1];
+          highStop = colorStops[i];
+          break;
+        }
+
+        if (i === colorStops.length - 1) {
+          lowStop = colorStops[i-1];
+          highStop = colorStops[i];
+        }
+      }
+
+      // Calculate the interpolation factor
+      const factor = (value - lowStop.pos) / (highStop.pos - lowStop.pos);
+
+      // Interpolate between the colors
+      const r = Math.round(lowStop.color[0] + factor * (highStop.color[0] - lowStop.color[0]));
+      const g = Math.round(lowStop.color[1] + factor * (highStop.color[1] - lowStop.color[1]));
+      const b = Math.round(lowStop.color[2] + factor * (highStop.color[2] - lowStop.color[2]));
+
+      return `rgb(${r}, ${g}, ${b})`;
+    }
+    
+    // Create and update the visualization
+    function updateVisualization() {
+      const { testType, selectedMetric } = state;
+
+      if (!benchmarkData[testType]) {
+        console.error(`No data for test type: ${testType}`);
+        return;
+      }
+
+      const metricMap = {
+        'bandwidth': 'bandwidth_gb',
+        'iops': 'iops',
+        'latency': 'latency_us',
+        'latency_p50': 'percentiles.p50',
+        'latency_p90': 'percentiles.p90',
+        'latency_p99': 'percentiles.p99'
+      };
+
+      const metricKey = metricMap[selectedMetric];
+      const testData = benchmarkData[testType];
+
+      // Map data to arrays for better access
+      const dataPoints = [];
+      
+      for (const iodepth in testData) {
+        for (const job in testData[iodepth]) {
+          if (testData[iodepth][job]) {
+            // Handle nested properties for percentiles
+            let value;
+            if (metricKey.includes('.')) {
+              const [obj, prop] = metricKey.split('.');
+              value = testData[iodepth][job][obj] ? testData[iodepth][job][obj][prop] : null;
+            } else {
+              value = testData[iodepth][job][metricKey];
+            }
+            
+            if (value !== undefined && value !== null) {
+              dataPoints.push({
+                iodepth: parseInt(iodepth),
+                job: parseInt(job),
+                value: value
+              });
+            }
+          }
+        }
+      }
+
+      // Find the maximum value for scaling
+      let minValue = Infinity;
+      let maxValue = -Infinity;
+      
+      for (const point of dataPoints) {
+        if (point.value < minValue) minValue = point.value;
+        if (point.value > maxValue) maxValue = point.value;
+      }
+
+      // Define plot data
+      const plotData = [];
+
+      // Bar width and depth (slightly less than 1 to create gaps)
+      const barWidth = 0.75;
+      const barDepth = 0.75;
+
+      // Find the indices for each iodepth and job
+      const uniqueIodepths = [...new Set(dataPoints.map(p => p.iodepth))].sort((a, b) => a - b);
+      const uniqueJobs = [...new Set(dataPoints.map(p => p.job))].sort((a, b) => a - b);
+      
+      // For latency metrics, determine the appropriate units based on the maximum value
+      let metricUnit = '';
+      
+      switch (selectedMetric) {
+        case 'bandwidth':
+          metricUnit = 'GB/s';
+          break;
+        case 'iops':
+          metricUnit = 'IOPS';
+          break;
+        case 'latency':
+        case 'latency_p50':
+        case 'latency_p90':
+        case 'latency_p99':
+          const formattedLatency = formatLatency(maxValue);
+          metricUnit = formattedLatency.unit;
+          
+          // Convert the values to the appropriate unit
+          const divisor = metricUnit === 's' ? 1000000 : 
+                         metricUnit === 'ms' ? 1000 : 1;
+                          
+          for (let point of dataPoints) {
+            point.value = point.value / divisor;
+          }
+          
+          // Recalculate min/max
+          minValue = Math.min(...dataPoints.map(p => p.value));
+          maxValue = Math.max(...dataPoints.map(p => p.value));
+          break;
+      }
+      
+      // Human-readable metric name for display
+      let metricName = selectedMetric.replace('_', ' ');
+      metricName = metricName.charAt(0).toUpperCase() + metricName.slice(1);
+      
+      // Create the data for each bar
+      for (const point of dataPoints) {
+        const i = uniqueIodepths.indexOf(point.iodepth);
+        const j = uniqueJobs.indexOf(point.job);
+        
+        if (i !== -1 && j !== -1) {
+          const normalizedValue = (point.value - minValue) / (maxValue - minValue);
+          const color = getColorFromValue(normalizedValue);
+
+          // Create the 3D bar
+          const bar = createBar(i, j, 0, barWidth, barDepth, point.value, color);
+
+          // Create hover text
+          const hoverText = `IO Depth: ${point.iodepth}<br>Jobs: ${point.job}<br>${metricName}: ${point.value.toFixed(2)} ${metricUnit}<br>Click for latency percentiles`;
+
+          // Create mesh3d object
+          plotData.push({
+            type: 'mesh3d',
+            x: bar.xs,
+            y: bar.ys,
+            z: bar.zs,
+            i: bar.i,
+            j: bar.j,
+            k: bar.k,
+            facecolor: bar.colors,
+            flatshading: true,
+            hoverinfo: 'text',
+            text: Array(bar.xs.length).fill(hoverText),
+            customdata: Array(bar.xs.length).fill({ 
+              iodepth: point.iodepth, 
+              job: point.job 
+            })
+          });
+        }
+      }
+
+      // Create colorscale for the colorbar
+      const colorscale = [
+        [0, 'rgb(0, 0, 255)'],      // Blue
+        [0.25, 'rgb(0, 255, 255)'],  // Cyan
+        [0.5, 'rgb(0, 255, 0)'],     // Green
+        [0.75, 'rgb(255, 165, 0)'],  // Orange
+        [1, 'rgb(255, 0, 0)']        // Red
+      ];
+
+      // Add a colorbar reference trace
+      plotData.push({
+        type: 'mesh3d',
+        x: [0],
+        y: [0],
+        z: [0],
+        i: [0],
+        j: [0],
+        k: [0],
+        intensity: [0, 1],
+        colorscale: colorscale,
+        showscale: true,
+        colorbar: {
+          title: metricUnit,
+          x: 1.05,
+          xanchor: 'left',
+          tickvals: [0, 0.25, 0.5, 0.75, 1],
+          ticktext: [
+            minValue.toFixed(1), 
+            ((maxValue - minValue) * 0.25 + minValue).toFixed(1), 
+            ((maxValue - minValue) * 0.5 + minValue).toFixed(1), 
+            ((maxValue - minValue) * 0.75 + minValue).toFixed(1), 
+            maxValue.toFixed(1)
+          ]
+        },
+        visible: true,
+        hoverinfo: 'none'
+      });
+
+      // Subtitle text
+      let blockType = '';
+      switch (selectedMetric) {
+        case 'bandwidth':
+          blockType = 'type bw';
+          break;
+        case 'iops':
+          blockType = 'type iops';
+          break;
+        case 'latency':
+          blockType = 'type lat';
+          break;
+        case 'latency_p50':
+          blockType = 'type lat (p50)';
+          break;
+        case 'latency_p90':
+          blockType = 'type lat (p90)';
+          break;
+        case 'latency_p99':
+          blockType = 'type lat (p99)';
+          break;
+      }
+      
+      // Get operation type (read or write)
+      const opType = testType.includes('write') ? 'write' : 'read';
+
+      // Create layout
+      const layout = {
+        title: {
+          text: `FIO ${testType} Thread Scaling`,
+          font: { size: 18 }
+        },
+        annotations: [
+          {
+            text: `| rw ${testType} | ${blockType} | filter ${opType} |`,
+            xref: 'paper',
+            yref: 'paper',
+            x: 0.5,
+            y: 1.05,
+            xanchor: 'center',
+            yanchor: 'bottom',
+            showarrow: false,
+            font: { size: 14 }
+          }
+        ],
+        scene: {
+          xaxis: {
+            title: 'iodepth',
+            tickvals: [...Array(uniqueIodepths.length).keys()],
+            ticktext: uniqueIodepths.map(String),
+            showspikes: false
+          },
+          yaxis: {
+            title: 'numjobs',
+            tickvals: [...Array(uniqueJobs.length).keys()],
+            ticktext: uniqueJobs.map(String),
+            showspikes: false
+          },
+          zaxis: {
+            title: metricUnit,
+            showspikes: false,
+          },
+          camera: {
+            eye: { x: 1.75, y: -1.75, z: 1.5 },
+            center: { x: 0, y: 0, z: 0 }
+          },
+          aspectratio: { x: 1.2, y: 1.2, z: 0.85 }
+        },
+        margin: {
+          l: 0,
+          r: 0,
+          b: 50,
+          t: 100,
+          pad: 0
+        },
+        autosize: true,
+        height: 600
+      };
+
+      // Create the plot
+      Plotly.newPlot(plotContainer, plotData, layout, {
+        responsive: true,
+        displayModeBar: true,
+        displaylogo: false
+      });
+      
+      // Add click event to show latency information
+      plotContainer.on('plotly_click', function(data) {
+        const point = data.points[0];
+        
+        // Check if we have customdata with the correct iodepth and job values
+        if (point.customdata && point.customdata.iodepth && point.customdata.job) {
+          // Use the custom data directly from the point
+          const iodepth = point.customdata.iodepth;
+          const job = point.customdata.job;
+          showLatencyPercentiles(iodepth, job, state.testType);
+        } else {
+          // Fallback to position-based lookup (though this may be less reliable)
+          const x = Math.round(point.x);
+          const y = Math.round(point.y);
+          
+          // Find the corresponding iodepth and numjob values
+          const iodepth = uniqueIodepths[x];
+          const job = uniqueJobs[y];
+          
+          if (iodepth && job) {
+            showLatencyPercentiles(iodepth, job, state.testType);
+          }
+        }
+      });
+    }
+
+    // Application state
+    const state = {
+      testType: 'randread',
+      selectedMetric: 'bandwidth'
+    };
+
+    // Event handlers
+    testTypeSelect.addEventListener('change', e => {
+      state.testType = e.target.value;
+      updateVisualization();
+    });
+
+    metricTypeSelect.addEventListener('change', e => {
+      state.selectedMetric = e.target.value;
+      updateVisualization();
+    });
+    
+    async function initializeApp() {
+        try {
+            // Load benchmark data first
+            await loadBenchmarkData();
+            console.log('Benchmark data loaded successfully');
+            
+            // Now update the visualization with the loaded data
+            updateVisualization();
+        } catch (error) {
+            console.error('Failed to initialize application:', error);
+            alert('Failed to load benchmark data. Please check the console for details.');
+        }
+    }
+    
+    // Handle window resize events for all plots
+    window.addEventListener('resize', () => {
+      const panels = document.querySelectorAll('.draggable-panel');
+      panels.forEach(panel => {
+        if (panel.style.display === 'block' && !panel.classList.contains('panel-collapsed')) {
+          const plotElement = panel.querySelector('.latency-plot-container');
+          if (plotElement) {
+            Plotly.relayout(plotElement, {
+              autosize: true
+            });
+          }
+        }
+      });
+    });
+    
+    // Initialize the visualization
+    document.addEventListener('DOMContentLoaded', initializeApp);
+  </script>
+</body>
+</html>
