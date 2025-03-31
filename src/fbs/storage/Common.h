@@ -144,6 +144,7 @@ struct ChecksumInfo {
   };
 
   static ChecksumInfo create(ChecksumType type, DataIterator *iter, size_t length, uint32_t startingChecksum = ~0U) {
+    KUTRACE_FOLLY_MARKER("ChecksumInfo::create");
     ChecksumInfo checksum = {type, startingChecksum};
     size_t iterBytes = 0;
 

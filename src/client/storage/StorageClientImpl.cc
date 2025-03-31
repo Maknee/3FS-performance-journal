@@ -13,11 +13,13 @@
 #include "common/monitor/Recorder.h"
 #include "common/monitor/ScopedMetricsWriter.h"
 #include "common/utils/ExponentialBackoffRetry.h"
+#include "common/utils/MagicEnum.hpp"
 #include "common/utils/RequestInfo.h"
 #include "common/utils/Result.h"
 #include "common/utils/SemaphoreGuard.h"
 #include "common/utils/StatusCodeConversion.h"
 #include "common/utils/StringUtils.h"
+#include "kutrace_userlib/kutrace_lib.h"
 
 namespace hf3fs::storage::client {
 
@@ -825,6 +827,7 @@ CoTryTask<Rsp> StorageClientImpl::callMessengerMethod(StorageMessenger &messenge
                                                       ClientRequestContext &requestCtx,
                                                       const hf3fs::flat::NodeInfo &nodeInfo,
                                                       const Req &request) {
+  KUTRACE_FOLLY_MARKER(fmt::format("StorageClientImpl:callMessengerMethod:{}", magic_enum::enum_name(requestCtx.methodType)), requestCtx.userCallId);
   monitor::ScopedLatencyWriter latencyWriter(request_latency, requestCtx.requestTagSet);
   monitor::ScopedCounterWriter inflightRequests(inflight_requests,
                                                 atomic_inflight_requests.at(requestCtx.methodType),
@@ -844,10 +847,42 @@ CoTryTask<Rsp> StorageClientImpl::callMessengerMethod(StorageMessenger &messenge
     for (const auto &address : serviceGroup.endpoints) {
       if (address.type == net::Address::Type::RDMA) {
         serde::Timestamp timestamp;
+
+#ifdef KUTRACE_RPC_ENABLE
+        // if (kutrace::RPCLogger::get()) {
+        //   kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+        //   kutrace::NetworkAddress server_addr(address.ip, address.port);
+
+        //   kutrace::RPCLogger::get()->log_client_send(
+        //     requestCtx.userCallId,
+        //     0,
+        //     client_addr,
+        //     server_addr,
+        //     magic_enum::enum_name(requestCtx.methodType),
+        //     kutrace::RPCMessage{}
+        //   );
+        // }
+#endif
         auto response =
             FAULT_INJECTION_POINT(requestCtx.debugFlags.injectClientError(),
                                   makeError(StorageClientCode::kCommError),
                                   (co_await std::invoke(Method, messenger, address, request, &options, &timestamp)));
+
+#ifdef KUTRACE_RPC_ENABLE
+        // if (kutrace::RPCLogger::get()) {
+        //     kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+        //     kutrace::NetworkAddress server_addr(address.ip, address.port);
+
+        //     kutrace::RPCStatus status = response ? kutrace::RPCStatus::Success : kutrace::RPCStatus::Fail;
+
+        //     kutrace::RPCLogger::get()->log_client_recv(
+        //         requestCtx.userCallId, 0, client_addr, server_addr, magic_enum::enum_name(requestCtx.methodType), status, kutrace::RPCMessage{},
+        //         timestamp.clientSerialized,
+        //         timestamp.serverReceived,
+        //         timestamp.serverSerialized
+        //     );
+        // }
+#endif
 
         XLOGF_IF(WARN,
                  latencyWriter.getElapsedTime() > requestCtx.requestTimeout * 2,
@@ -1146,6 +1181,7 @@ CoTryTask<void> sendOpsWithRetry(ClientRequestContext &requestCtx,
                                  const std::vector<Op *> &ops,
                                  auto &&sendOps,
                                  const RetryOptions &options) {
+  KUTRACE_FOLLY_MARKER(fmt::format("StorageClientImpl:sendOpsWithRetry:{}", magic_enum::enum_name(requestCtx.methodType)), requestCtx.userCallId);
   ExponentialBackoffRetry backoffRetry(options.init_wait_time().asMs(),
                                        options.max_wait_time().asMs(),
                                        options.max_retry_time().asMs());

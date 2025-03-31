@@ -21,6 +21,7 @@ monitor::CountRecorder rdmaBufMem("common.ib.rdma_buf_mem", {}, false);
 
 /** RDMABuf */
 void RDMABuf::Inner::deallocate(Inner *ptr) {
+  KUTRACE_FOLLY_MARKER("RDMABuf::Inner::deallocate");
   if (ptr) {
     auto pool = ptr->pool_.lock();
     if (pool) {
@@ -32,6 +33,7 @@ void RDMABuf::Inner::deallocate(Inner *ptr) {
 }
 
 RDMABuf RDMABuf::allocate(size_t size, std::weak_ptr<RDMABufPool> pool) {
+  KUTRACE_FOLLY_MARKER("RDMABuf::allocate");
   RDMABuf::Inner inner(std::move(pool), size);
   if (inner.init() != 0) {
     return RDMABuf();
@@ -40,6 +42,7 @@ RDMABuf RDMABuf::allocate(size_t size, std::weak_ptr<RDMABufPool> pool) {
 }
 
 RDMABuf RDMABuf::createFromUserBuffer(uint8_t *buf, size_t len) {
+  KUTRACE_FOLLY_MARKER("RDMABuf::createFromUserBuffer");
   RDMABuf::Inner inner(buf, len);
   if (inner.registerMemory() != 0) {
     return RDMABuf();
@@ -91,6 +94,7 @@ bool RDMABuf::Inner::getRkeys(std::array<RDMARemoteBuf::Rkey, IBDevice::kMaxDevi
 }
 
 int RDMABuf::Inner::allocateMemory() {
+  KUTRACE_FOLLY_MARKER("RDMABuf::Inner::allocateMemory");
   static size_t kPageSize = sysconf(_SC_PAGESIZE);
 
   ptr_ = (uint8_t *)hf3fs::memory::memalign(kPageSize, capacity_);
@@ -105,6 +109,7 @@ int RDMABuf::Inner::allocateMemory() {
 }
 
 int RDMABuf::Inner::registerMemory() {
+  KUTRACE_FOLLY_MARKER("RDMABuf::Inner::registerMemory");
   size_t devs = 0;
   for (auto &dev : IBDevice::all()) {
     XLOGF_IF(FATAL,

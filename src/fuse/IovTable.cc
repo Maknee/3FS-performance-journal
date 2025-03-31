@@ -127,6 +127,7 @@ Result<std::pair<meta::Inode, std::shared_ptr<lib::ShmBuf>>> IovTable::addIov(co
                                                                               const meta::UserInfo &ui,
                                                                               folly::Executor::KeepAlive<> exec,
                                                                               storage::client::StorageClient &sc) {
+  KUTRACE_FOLLY_MARKER("IovTable::addIov");
   static monitor::DistributionRecorder mapTimesCount("fuse.iov.times", monitor::TagSet{{"mount_name", mountName}});
   static monitor::DistributionRecorder mapBytesDist("fuse.iov.bytes", monitor::TagSet{{"mount_name", mountName}});
   static monitor::CountRecorder shmSizeCount("fuse.iov.total_bytes", monitor::TagSet{{"mount_name", mountName}}, false);
@@ -242,6 +243,7 @@ Result<std::pair<meta::Inode, std::shared_ptr<lib::ShmBuf>>> IovTable::addIov(co
 }
 
 Result<std::shared_ptr<lib::ShmBuf>> IovTable::rmIov(const char *key, const meta::UserInfo &ui) {
+  KUTRACE_FOLLY_MARKER("IovTable::rmIov");
   auto res = lookupIov(key, ui);
   RETURN_ON_ERROR(res);
 
@@ -286,6 +288,7 @@ Result<meta::Inode> IovTable::statIov(int iovd, const meta::UserInfo &ui) {
 }
 
 Result<meta::Inode> IovTable::lookupIov(const char *key, const meta::UserInfo &ui) {
+  KUTRACE_FOLLY_MARKER("IovTable::lookupIov");
   int iovd = -1;
   {
     std::shared_lock lock(iovdLock_);
@@ -302,6 +305,7 @@ Result<meta::Inode> IovTable::lookupIov(const char *key, const meta::UserInfo &u
 
 std::pair<std::shared_ptr<std::vector<meta::DirEntry>>, std::shared_ptr<std::vector<std::optional<meta::Inode>>>>
 IovTable::listIovs(const meta::UserInfo &ui) {
+  KUTRACE_FOLLY_MARKER("IovTable::listIovs");
   meta::DirEntry de{meta::InodeId::iovDir(), ""};
 
   auto n = iovs->slots.nextAvail.load();

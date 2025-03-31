@@ -58,6 +58,7 @@ Result<TcpSocket::Events> TcpSocket::poll(uint32_t events) {
 }
 
 Result<size_t> TcpSocket::recv(folly::MutableByteRange buf) {
+  KUTRACE_FOLLY_MARKER("TcpSocket::recv");
   size_t readSize = 0;
   while (!buf.empty()) {
     int ret = ::read(fd_, buf.data(), buf.size());
@@ -95,6 +96,7 @@ static void updateIOVec(struct iovec iov[], uint32_t len, uint32_t &begin, size_
 }
 
 Result<size_t> TcpSocket::send(struct iovec iov[], uint32_t len) {
+  KUTRACE_FOLLY_MARKER("TcpSocket::send");
   size_t writeSize = 0;
   uint32_t begin = 0;
 
@@ -159,6 +161,7 @@ Result<Void> TcpSocket::init(bool isDomainSocket /* = false */) {
 }
 
 Result<Socket::Events> TcpSocket::pollWithTimeout(short events, Duration timeout) {
+  KUTRACE_FOLLY_MARKER("TcpSocket::pollWithTimeout");
   struct pollfd fds[1];
   fds[0].fd = fd_;
   fds[0].events = events;
@@ -180,6 +183,7 @@ Result<Socket::Events> TcpSocket::pollWithTimeout(short events, Duration timeout
 }
 
 Result<Void> TcpSocket::sendSync(uint8_t *buff, uint32_t size, RelativeTime startTime, Duration timeout) {
+  KUTRACE_FOLLY_MARKER("TcpSocket::sendSync");
   uint32_t written = 0;
   auto deadlineTime = startTime + timeout;
   while (written < size) {
@@ -205,6 +209,7 @@ Result<Void> TcpSocket::sendSync(uint8_t *buff, uint32_t size, RelativeTime star
 }
 
 Result<Void> TcpSocket::recvSync(folly::MutableByteRange buf, RelativeTime startTime, Duration timeout) {
+  KUTRACE_FOLLY_MARKER("TcpSocket::recvSync");
   auto deadlineTime = startTime + timeout;
   while (!buf.empty()) {
     auto result = this->recv(buf);

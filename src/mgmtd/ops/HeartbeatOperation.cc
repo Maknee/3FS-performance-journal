@@ -116,6 +116,7 @@ Result<Void> prepareHandleHeartbeat(MgmtdState &state,
 }  // namespace
 
 CoTryTask<HeartbeatRsp> HeartbeatOperation::handle(MgmtdState &state) {
+  KUTRACE_FOLLY_MARKER("HeartbeatOperation::handle");
   CO_RETURN_ON_ERROR(state.validateClusterId(*this, req.clusterId));
 
   const auto &hb = req.info;

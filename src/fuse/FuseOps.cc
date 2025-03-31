@@ -427,6 +427,7 @@ CoTryTask<ssize_t> flushBuf(const flat::UserInfo &user,
                             storage::client::IOBuffer &memh,
                             const size_t len,
                             bool flushAll) {
+  KUTRACE_FOLLY_MARKER("hf3fs::fuse::flushBuf");
   static auto mountName = d.fuseRemountPref.value_or(d.fuseMountpoint).native();
 
   static monitor::LatencyRecorder overallLatency("fuse.piov.overall.write", monitor::TagSet{{"mount_name", mountName}});
@@ -642,6 +643,7 @@ bool flushAndSync(fuse_req_t req,
 }
 
 void hf3fs_lookup(fuse_req_t req, fuse_ino_t fparent, const char *name) {
+  KUTRACE_FOLLY_MARKER("hf3fs_lookup");
   auto parent = real_ino(fparent);
 
   XLOGF(OP_LOG_LEVEL, "hf3fs_lookup(parent={}, name={}, pid={})", parent, name, fuse_req_ctx(req)->pid);
@@ -1416,6 +1418,7 @@ void hf3fs_link(fuse_req_t req, fuse_ino_t fino, fuse_ino_t fnewparent, const ch
 }
 
 void hf3fs_open(fuse_req_t req, fuse_ino_t fino, struct fuse_file_info *fi) {
+  KUTRACE_FOLLY_MARKER("hf3fs_open");
   auto userInfo = UserInfo(flat::Uid(fuse_req_ctx(req)->uid), flat::Gid(fuse_req_ctx(req)->gid), d.fuseToken);
 
   if ((fi->flags & O_WRONLY) || (fi->flags & O_RDWR) || (fi->flags & O_CREAT) || (fi->flags & O_EXCL) ||
@@ -1471,6 +1474,7 @@ void hf3fs_open(fuse_req_t req, fuse_ino_t fino, struct fuse_file_info *fi) {
 }
 
 void hf3fs_read(fuse_req_t req, fuse_ino_t fino, size_t size, off_t off, struct fuse_file_info *fi) {
+  KUTRACE_FOLLY_MARKER("hf3fs_read");
   auto ino = real_ino(fino);
 
   XLOGF(OP_LOG_LEVEL, "hf3fs_read(ino={}, size={}, off={}, pid={})", ino, size, off, fuse_req_ctx(req)->pid);
@@ -1544,12 +1548,14 @@ void hf3fs_read(fuse_req_t req, fuse_ino_t fino, size_t size, off_t off, struct 
     XLOGF(ERR, "  hf3fs_read error, ino {}, size {}, off {}, err {}", ino, size, off, res[0]);
     fuse_reply_err(req, StatusCode::toErrno(-res[0]));
   } else {
+    KUTRACE_FOLLY_MARKER("hf3fs_read:fuse_reply_buf");
     XLOGF(OP_LOG_LEVEL, "  read bytes, {}", res[0]);
     fuse_reply_buf(req, (char *)memh.data(), res[0]);
   }
 }
 
 void hf3fs_write(fuse_req_t req, fuse_ino_t fino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi) {
+  KUTRACE_FOLLY_MARKER("hf3fs_write");
   static auto mountName = d.fuseRemountPref.value_or(d.fuseMountpoint).native();
   static monitor::LatencyRecorder writeLatency("fuse.write.latency", monitor::TagSet{{"mount_name", mountName}});
   static monitor::DistributionRecorder writeDist("fuse.write.size", monitor::TagSet{{"mount_name", mountName}});
@@ -1590,6 +1596,7 @@ void hf3fs_write(fuse_req_t req, fuse_ino_t fino, const char *buf, size_t size, 
   std::unique_lock lock(pi->wbMtx);
   auto wb = pi->writeBuf;
   if (odir || !d.config->io_bufs().write_buf_size()) {
+    KUTRACE_FOLLY_MARKER("hf3fs_write:flushBufODir");
     if (!wb) {
       lock.unlock();
     } else {
@@ -1624,12 +1631,14 @@ void hf3fs_write(fuse_req_t req, fuse_ino_t fino, const char *buf, size_t size, 
     writeLatency.addSample(SteadyClock::now() - start, monitor::TagSet{{"uid", uids}});
 
     if (ret >= 0) {
+      KUTRACE_FOLLY_MARKER("hf3fs_write:fuse_reply_write");
       fuse_reply_write(req, ret);
     }
     return;
   }
 
   if (!wb) {
+    KUTRACE_FOLLY_MARKER("hf3fs_write:registerIOBuffer");
     auto wb2 = std::make_shared<InodeWriteBuf>();
     wb2->buf.resize(d.config->io_bufs().write_buf_size());
     auto ret = d.storageClient->registerIOBuffer(wb2->buf.data(), wb2->buf.size());
@@ -1646,6 +1655,7 @@ void hf3fs_write(fuse_req_t req, fuse_ino_t fino, const char *buf, size_t size, 
 
   // std::lock_guard lock(wb->mtx);
   {
+    KUTRACE_FOLLY_MARKER("hf3fs_write:flushBufAndCopy");
     if (wb->len && wb->off + (ssize_t)wb->len != off) {
       XLOGF(DBG, "to flush due to inconsecutive off {} prev off {} len {}", off, wb->off, wb->len);
       if (flushBuf(req, pi, wb->off, *wb->memh, wb->len, true) < 0) {
@@ -1685,10 +1695,14 @@ void hf3fs_write(fuse_req_t req, fuse_ino_t fino, const char *buf, size_t size, 
   }
 
   writeLatency.addSample(SteadyClock::now() - start, monitor::TagSet{{"uid", uids}});
-  fuse_reply_write(req, size);
+  {
+    KUTRACE_FOLLY_MARKER("hf3fs_write:fuse_reply_write");
+    fuse_reply_write(req, size);
+  }
 }
 
 void hf3fs_fsync(fuse_req_t req, fuse_ino_t fino, int datasync, struct fuse_file_info *fi) {
+  KUTRACE_FOLLY_MARKER("hf3fs_sync");
   XLOGF(DBG, "fsync called");
   XLOGF(OP_LOG_LEVEL, "hf3fs_sync(ino={}, datasync={}, pid={})", fino, datasync, fuse_req_ctx(req)->pid);
   if (datasync) {
@@ -1835,6 +1849,7 @@ void hf3fs_releasedir(fuse_req_t req, fuse_ino_t fino, struct fuse_file_info *fi
 }
 
 void hf3fs_statfs(fuse_req_t req, fuse_ino_t fino) {
+  KUTRACE_FOLLY_MARKER("hf3fs_statfs");
   auto ino = real_ino(fino);
 
   XLOGF(OP_LOG_LEVEL, "hf3fs_statfs(ino={}, pid={})", ino, fuse_req_ctx(req)->pid);
@@ -1858,6 +1873,7 @@ void hf3fs_statfs(fuse_req_t req, fuse_ino_t fino) {
 }
 
 void hf3fs_create(fuse_req_t req, fuse_ino_t fparent, const char *name, mode_t mode, struct fuse_file_info *fi) {
+  KUTRACE_FOLLY_MARKER("hf3fs_create");
   auto userInfo = UserInfo(flat::Uid(fuse_req_ctx(req)->uid), flat::Gid(fuse_req_ctx(req)->gid), d.fuseToken);
   if (d.userConfig.getConfig(userInfo).readonly()) {
     fuse_reply_err(req, EROFS);
@@ -1914,6 +1930,7 @@ void hf3fs_ioctl(fuse_req_t req,
                  const void *in_buf,
                  size_t in_bufsz,
                  size_t out_bufsz) {
+  KUTRACE_FOLLY_MARKER("hf3fs_ioctl");
   (void)fi;
   (void)in_bufsz;
 

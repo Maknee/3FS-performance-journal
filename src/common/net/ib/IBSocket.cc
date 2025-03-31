@@ -62,6 +62,7 @@
 #include "common/utils/MagicEnum.hpp"
 #include "common/utils/Result.h"
 #include "common/utils/UtcTime.h"
+#include "kutrace_userlib/kutrace_rpc_logger.h"
 
 // IBDBG use to print logs on data path, disable it by default.
 #ifndef ENABLE_IBDBG
@@ -362,6 +363,7 @@ Result<IBSocket::Events> IBSocket::poll(uint32_t /* events */) {
 }
 
 void IBSocket::cqPoll(Events &events) {
+  KUTRACE_FOLLY_MARKER("IBSocket::cqPoll");
   static constexpr int kPollCQBatch = 16;
   std::array<ibv_wc, kPollCQBatch> wcArr;
 
@@ -606,6 +608,7 @@ Result<size_t> IBSocket::send(struct iovec *iov, uint32_t cnt) {
 }
 
 Result<size_t> IBSocket::send(folly::ByteRange buf) {
+  KUTRACE_FOLLY_MARKER("IBSocket::send");
   RETURN_ON_ERROR(checkState());
 
   if (sendWaitBufBegin_ && !sendBufs_.empty()) {
@@ -661,6 +664,7 @@ Result<Void> IBSocket::flush() {
 }
 
 Result<size_t> IBSocket::recv(folly::MutableByteRange buf) {
+  KUTRACE_FOLLY_MARKER("IBSocket::recv");
   size_t total = 0;
   while (!recvBufs_.empty()) {
     if (buf.empty()) {
@@ -908,6 +912,7 @@ CoTryTask<void> IBSocket::rdmaBatch(ibv_wr_opcode opcode,
                                     const std::span<RDMABuf> localBufs,
                                     std::chrono::nanoseconds &waitLatency,
                                     std::chrono::nanoseconds &transferLatency) {
+  KUTRACE_FOLLY_MARKER(fmt::format("IBSocket::rdmaBatch::{}", magic_enum::enum_name(opcode)));
   IBDBG("IBSocket {} rdmaBatch: opcode {}, {} reqs, {} localBufs",
         describe(),
         magic_enum::enum_name(opcode),

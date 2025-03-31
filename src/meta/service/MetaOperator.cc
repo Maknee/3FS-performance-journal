@@ -43,6 +43,7 @@
 #include "fbs/meta/Service.h"
 #include "fbs/meta/Utils.h"
 #include "fdb/FDBRetryStrategy.h"
+#include "kutrace_userlib/kutrace_lib.h"
 #include "meta/components/ChainAllocator.h"
 #include "meta/components/Distributor.h"
 #include "meta/components/FileHelper.h"
@@ -70,6 +71,15 @@ using namespace std::chrono_literals;
 template <typename Func, typename Arg>
 auto MetaOperator::runOp(Func &&func, Arg &&arg)
     -> CoTryTask<typename std::invoke_result_t<Func, MetaStore, Arg &&>::element_type::RspT> {
+  uint64_t trace_id = 0;
+  // Extract rpcId if possible from 'arg' (the request object)
+  if constexpr (std::is_base_of_v<ReqBase, std::remove_reference_t<Arg>>) {
+      trace_id = arg.rpcId; // Assuming rpcId was added to ReqBase
+  }
+  std::string_view opName = typeid(std::remove_cvref_t<Func>).name();
+  // auto opName = MetaSerde<>::getRpcName(arg); // Get operation name
+  KUTRACE_FOLLY_MARKER(opName, trace_id);
+
 #ifndef NDEBUG
   auto fi = FaultInjection::clone();
 #endif
@@ -89,6 +99,8 @@ auto MetaOperator::runOp(Func &&func, Arg &&arg)
 CoTryTask<Inode> MetaOperator::runBatch(InodeId inodeId,
                                         std::unique_ptr<BatchedOp> op,
                                         std::optional<SteadyTime> deadline) {
+  KUTRACE_FOLLY_MARKER("MetaOperator::runBatch");
+
 #ifndef NDEBUG
   auto fi = FaultInjection::clone();
 #endif

@@ -10,6 +10,8 @@
 #include "common/serde/Serde.h"
 #include "common/serde/Service.h"
 #include "common/utils/Duration.h"
+#include "fbs/meta/Service.h" // Assuming ReqBase is defined here
+#include "kutrace_userlib/kutrace_rpc_logger.h"
 
 namespace hf3fs::serde {
 
@@ -40,6 +42,7 @@ class ClientContext {
   CoTryTask<Rsp> call(const Req &req,
                       const net::UserRequestOptions *customOptions = nullptr,
                       Timestamp *timestamp = nullptr) {
+    KUTRACE_FOLLY_MARKER(fmt::format("ClientContext::call:{}:{}", static_cast<std::string_view>(kServiceName), static_cast<std::string_view>(kMethodName)));
     auto options = *options_.load(std::memory_order_acquire);
     if (customOptions != nullptr) {
       options.merge(*customOptions);
@@ -52,6 +55,23 @@ class ClientContext {
     if ((options.logLongRunningThreshold != 0_ms || options.reportMetrics) && timestamp == nullptr) {
       timestamp = &ts;
     }
+
+#ifdef KUTRACE_RPC_ENABLE
+    if (kutrace::RPCLogger::get()) {
+      timestamp = &ts;
+      uint32_t rpcid = 0;
+      if constexpr (std::is_base_of_v<::hf3fs::meta::ReqBase, Req>) {
+          rpcid = req.rpcId;
+      }
+
+      kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+      kutrace::NetworkAddress server_addr(addr().ip, addr().port);
+
+      std::string method_name = fmt::format("ClientContext::call:{}:{}", static_cast<std::string_view>(kServiceName), static_cast<std::string_view>(kMethodName));
+
+      kutrace::RPCLogger::get()->log_client_send(rpcid, 0, client_addr, server_addr, method_name, kutrace::RPCMessage{});
+    }
+#endif
 
     MessagePacket packet(req);
     packet.uuid = uuid;
@@ -127,6 +147,30 @@ class ClientContext {
       static const auto tags = monitor::TagSet::create("instance", methodName);
       reportMetrics(tags, timestamp, requestLength, item.buf->length());
     }
+
+#ifdef KUTRACE_RPC_ENABLE
+    if (kutrace::RPCLogger::get()) {
+      uint32_t rpcid = 0;
+      if constexpr (std::is_base_of_v<::hf3fs::meta::ReqBase, Req>) {
+          rpcid = req.rpcId;
+      }
+
+      kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+      kutrace::NetworkAddress server_addr(addr().ip, addr().port);
+
+      std::string method_name = fmt::format("ClientContext::call:{}:{}", static_cast<std::string_view>(kServiceName), static_cast<std::string_view>(kMethodName));
+
+      kutrace::RPCStatus status = rsp ? kutrace::RPCStatus::Success : kutrace::RPCStatus::Fail;
+
+      kutrace::RPCLogger::get()->log_client_recv(
+          rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+          timestamp->clientSerialized,
+          timestamp->serverReceived,
+          timestamp->serverSerialized
+      );
+    }
+#endif
+
     co_return rsp;
   }
 
@@ -139,11 +183,28 @@ class ClientContext {
   Result<Rsp> callSync(const Req &req,
                        const net::UserRequestOptions *customOptions = nullptr,
                        Timestamp *timestamp = nullptr) {
+    KUTRACE_FOLLY_MARKER(fmt::format("ClientContext::callSync:{}:{}", static_cast<std::string_view>(kServiceName), static_cast<std::string_view>(kMethodName)));
     auto options = *options_.load(std::memory_order_acquire);
     if (customOptions != nullptr) {
       options.merge(*customOptions);
     }
     auto startTime = RelativeTime::now();
+
+#ifdef KUTRACE_RPC_ENABLE
+    // if (kutrace::RPCLogger::get()) {
+    //   uint32_t rpcid = 0;
+    //   if constexpr (std::is_base_of_v<::hf3fs::meta::ReqBase, Req>) {
+    //       rpcid = req.rpcId;
+    //   }
+
+    //   kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    //   kutrace::NetworkAddress server_addr(addr().ip, addr().port);
+
+    //   std::string method_name = fmt::format("{}::{}", static_cast<std::string_view>(kServiceName), static_cast<std::string_view>(kMethodName));
+
+    //   kutrace::RPCLogger::get()->log_client_send(rpcid, 0, client_addr, server_addr, method_name, kutrace::RPCMessage{});
+    // }
+#endif
 
     MessagePacket packet(req);
     packet.serviceId = ServiceID;
@@ -188,6 +249,30 @@ class ClientContext {
       timestamp->clientWaked = UtcClock::now().time_since_epoch().count();
     }
     connectionPool->restore(destAddr_, std::move(conn));
+
+#ifdef KUTRACE_RPC_ENABLE
+    // if (kutrace::RPCLogger::get()) {
+    //   uint32_t rpcid = 0;
+    //   if constexpr (std::is_base_of_v<::hf3fs::meta::ReqBase, Req>) {
+    //       rpcid = req.rpcId;
+    //   }
+
+    //   kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    //   kutrace::NetworkAddress server_addr(addr().ip, addr().port);
+
+    //   std::string method_name = fmt::format("{}::{}", static_cast<std::string_view>(kServiceName), static_cast<std::string_view>(kMethodName));
+
+    //   kutrace::RPCStatus status = rsp ? kutrace::RPCStatus::Success : kutrace::RPCStatus::Fail;
+
+    //   kutrace::RPCLogger::get()->log_client_recv(
+    //       rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+    //       timestamp->clientSerialized,
+    //       timestamp->serverReceived,
+    //       timestamp->serverSerialized
+    //   );
+    // }
+#endif
+
     return rsp;
   }
 

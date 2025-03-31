@@ -9,6 +9,7 @@
 #include "common/utils/Duration.h"
 #include "common/utils/Result.h"
 #include "common/utils/SemaphoreGuard.h"
+#include "kutrace_userlib/kutrace_rpc_logger.h"
 #include "storage/aio/BatchReadJob.h"
 #include "storage/service/Components.h"
 #include "storage/update/UpdateJob.h"
@@ -82,6 +83,8 @@ Result<Void> StorageOperator::stopAndJoin() {
 CoTryTask<BatchReadRsp> StorageOperator::batchRead(ServiceRequestContext &requestCtx,
                                                    const BatchReadReq &req,
                                                    serde::CallContext &ctx) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::batchRead", req.tag.requestId);
+
   XLOGF(DBG5, "Received batch read request {} with tag {} and {} IOs", fmt::ptr(&req), req.tag, req.payloads.size());
 
   auto recordGuard = storageReqReadRecoder.record(monitor::instanceTagSet(std::to_string(req.userInfo.uid)));
@@ -233,6 +236,7 @@ CoTryTask<BatchReadRsp> StorageOperator::batchRead(ServiceRequestContext &reques
 CoTryTask<WriteRsp> StorageOperator::write(ServiceRequestContext &requestCtx,
                                            const WriteReq &req,
                                            net::IBSocket *ibSocket) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::write", requestCtx.tag.requestId);
   auto recordGuard = storageReqWriteRecoder.record(monitor::instanceTagSet(std::to_string(req.userInfo.uid)));
 
   XLOGF(DBG1,
@@ -284,6 +288,7 @@ CoTryTask<WriteRsp> StorageOperator::write(ServiceRequestContext &requestCtx,
 CoTryTask<UpdateRsp> StorageOperator::update(ServiceRequestContext &requestCtx,
                                              const UpdateReq &updateReq,
                                              net::IBSocket *ibSocket) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::update", requestCtx.tag.requestId);
   auto recordGuard = storageReqUpdateRecoder.record(monitor::instanceTagSet(std::to_string(updateReq.userInfo.uid)));
 
   auto req = updateReq;
@@ -334,6 +339,8 @@ CoTask<IOResult> StorageOperator::handleUpdate(ServiceRequestContext &requestCtx
                                                UpdateReq &req,
                                                net::IBSocket *ibSocket,
                                                TargetPtr &target) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::handleUpdate", req.tag.requestId);
+
   // 1. get target.
   if (UNLIKELY(req.options.fromClient && !target->isHead)) {
     XLOGF(ERR, "non-head node receive a client update request");
@@ -523,6 +530,8 @@ CoTask<IOResult> StorageOperator::doUpdate(ServiceRequestContext &requestCtx,
                                            net::RDMARemoteBuf &remoteBuf,
                                            ChunkEngineUpdateJob &chunkEngineJob,
                                            bool allowToAllocate) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::doUpdate", requestCtx.tag.requestId);
+
   auto recordGuard = storageDoUpdateRecoder.record();
   UpdateJob job(requestCtx, updateIO, updateOptions, chunkEngineJob, target, allowToAllocate);
 
@@ -614,6 +623,8 @@ CoTask<IOResult> StorageOperator::doCommit(ServiceRequestContext &requestCtx,
                                            ChunkEngineUpdateJob &chunkEngineJob,
                                            uint32_t featureFlags,
                                            const std::shared_ptr<StorageTarget> &target) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::doCommit", requestCtx.tag.requestId);
+
   auto recordGuard = storageDoCommitRecoder.record();
   UpdateJob job(requestCtx, commitIO, updateOptions, chunkEngineJob, target);
   if (BITFLAGS_CONTAIN(featureFlags, FeatureFlags::BYPASS_DISKIO)) {
@@ -633,6 +644,8 @@ CoTask<IOResult> StorageOperator::doCommit(ServiceRequestContext &requestCtx,
 Result<std::vector<std::pair<ChunkId, ChunkMetadata>>> StorageOperator::doQuery(ServiceRequestContext &requestCtx,
                                                                                 const VersionedChainId &vChainId,
                                                                                 const ChunkIdRange &chunkIdRange) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::doQuery", requestCtx.tag.requestId);
+
   auto recordGuard = storageDoQueryRecoder.record();
   // get target for chunk query from client.
   CHECK_RESULT(target, components_.targetMap.getByChainId(vChainId));
@@ -655,6 +668,8 @@ CoTryTask<uint32_t> StorageOperator::processQueryResults(ServiceRequestContext &
                                                          const ChunkIdRange &chunkIdRange,
                                                          ChunkMetadataProcessor processor,
                                                          bool &moreChunksInRange) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::processQueryResults", requestCtx.tag.requestId);
+
   const uint32_t numChunksToProcess = chunkIdRange.maxNumChunkIdsToProcess
                                           ? std::min(chunkIdRange.maxNumChunkIdsToProcess, UINT32_MAX - 1)
                                           : (UINT32_MAX - 1);
@@ -754,6 +769,8 @@ CoTask<IOResult> StorageOperator::doTruncate(ServiceRequestContext &requestCtx,
                                              const TruncateChunkOp &op,
                                              flat::UserInfo userInfo,
                                              uint32_t featureFlags) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::doTruncate", requestCtx.tag.requestId);
+
   auto recordGuard = storageDoTruncateRecoder.record();
   UpdateIO updateIO{0 /*offset*/,
                     op.chunkLen,
@@ -802,6 +819,8 @@ CoTask<IOResult> StorageOperator::doRemove(ServiceRequestContext &requestCtx,
                                            const RemoveChunksOp &op,
                                            flat::UserInfo userInfo,
                                            uint32_t featureFlags) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::doRemove", requestCtx.tag.requestId);
+
   auto recordGuard = storageDoRemoveRecoder.record();
   // this method requires that the chunk id range specifies one chunk
   assert(op.chunkIdRange.begin == op.chunkIdRange.end);
@@ -857,6 +876,8 @@ CoTask<IOResult> StorageOperator::doRemove(ServiceRequestContext &requestCtx,
 
 CoTryTask<QueryLastChunkRsp> StorageOperator::queryLastChunk(ServiceRequestContext &requestCtx,
                                                              const QueryLastChunkReq &req) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::queryLastChunk", requestCtx.tag.requestId);
+
   XLOGF(DBG3, "Query request {} with {} ops", fmt::ptr(&req), req.payloads.size());
 
   QueryLastChunkRsp rsp;
@@ -917,6 +938,8 @@ CoTryTask<QueryLastChunkRsp> StorageOperator::queryLastChunk(ServiceRequestConte
 
 CoTryTask<TruncateChunksRsp> StorageOperator::truncateChunks(ServiceRequestContext &requestCtx,
                                                              const TruncateChunksReq &req) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::truncateChunks", requestCtx.tag.requestId);
+
   XLOGF(INFO, "Truncate request {} with {} ops", fmt::ptr(&req), req.payloads.size());
 
   size_t numTruncatedChunks = 0;
@@ -935,6 +958,8 @@ CoTryTask<TruncateChunksRsp> StorageOperator::truncateChunks(ServiceRequestConte
 
 CoTryTask<RemoveChunksRsp> StorageOperator::removeChunks(ServiceRequestContext &requestCtx,
                                                          const RemoveChunksReq &req) {
+  KUTRACE_FOLLY_MARKER("StorageOperator::removeChunks", requestCtx.tag.requestId);
+
   auto recordGuard = storageReqRemoveChunksRecoder.record();
   XLOGF(DBG7, "Remove request {} with {} ops", fmt::ptr(&req), req.payloads.size());
 

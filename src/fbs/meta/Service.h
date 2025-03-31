@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <fcntl.h>
 #include <folly/logging/xlog.h>
 #include <functional>
@@ -40,6 +41,11 @@ struct ReqBase {
   SERDE_STRUCT_FIELD(client, ClientId{Uuid::zero()});
   SERDE_STRUCT_FIELD(forward, flat::NodeId(0));
   SERDE_STRUCT_FIELD(uuid, Uuid::zero());
+#ifdef KUTRACE_RPC_ENABLE
+  SERDE_STRUCT_FIELD(rpcId, uint32_t(0)); // Add rpcId field
+#endif
+//   SERDE_STRUCT_FIELD(clientReqSendTime, int64_t(0)); // Add client send time field (usec)
+// #endif
 
  public:
   // set client id in unittest
@@ -54,6 +60,10 @@ struct ReqBase {
     if (currentClientId()) {
       client = *currentClientId();
     }
+#ifdef KUTRACE_RPC_ENABLE
+    static std::atomic<uint64_t> incrementRpcId = 0;
+    rpcId = incrementRpcId.fetch_add(1, std::memory_order_relaxed);
+#endif
   }
 
   Result<Void> checkUuid() const {
@@ -64,6 +74,11 @@ struct ReqBase {
 };
 struct RspBase {
   SERDE_STRUCT_FIELD(dummy, Void{});
+// #ifdef KUTRACE_RPC_ENABLE
+//   SERDE_STRUCT_FIELD(rpcId, uint32_t(0)); // Add rpcId field (mirrored from request)
+//   SERDE_STRUCT_FIELD(reqRecvTime, int64_t(0)); // Add server request receive time (usec)
+//   SERDE_STRUCT_FIELD(respSendTime, int64_t(0)); // Add server response send time (usec)
+// #endif
 };
 
 // authentication

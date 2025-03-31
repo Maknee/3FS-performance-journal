@@ -7,6 +7,7 @@
 #include "common/net/Transport.h"
 #include "common/net/tcp/TcpSocket.h"
 #include "common/utils/Address.h"
+#include "kutrace_userlib/kutrace_rpc_logger.h"
 
 namespace hf3fs::net {
 
@@ -47,6 +48,7 @@ Result<TransportPtr> IOWorker::addIBSocket(std::unique_ptr<IBSocket> sock) {
 }
 
 void IOWorker::sendAsync(Address addr, WriteList list) {
+  KUTRACE_FOLLY_MARKER("IOWorker::sendAsync");
   auto transport = getTransport(addr);
   auto failList = transport->send(std::move(list));
   if (failList.has_value()) {
@@ -105,6 +107,7 @@ CoTryTask<void> IOWorker::waitAndRetry(Address addr, WriteList list) {
 }
 
 void IOWorker::startReadTask(Transport *transport, bool error, bool logError /* = true */) {
+  KUTRACE_FOLLY_MARKER("IOWorker::startReadTask");
   if ((transport->isTCP() && config_.read_write_tcp_in_event_thread()) ||
       (transport->isRDMA() && config_.read_write_rdma_in_event_thread())) {
     transport->doRead(error, logError);
@@ -115,6 +118,7 @@ void IOWorker::startReadTask(Transport *transport, bool error, bool logError /* 
 }
 
 void IOWorker::startWriteTask(Transport *transport, bool error, bool logError /* = true */) {
+  KUTRACE_FOLLY_MARKER("IOWorker::startWriteTask");
   if ((transport->isTCP() && config_.read_write_tcp_in_event_thread()) ||
       (transport->isRDMA() && config_.read_write_rdma_in_event_thread())) {
     transport->doWrite(error, logError);

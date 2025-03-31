@@ -185,6 +185,7 @@ void MetaClient::enqueueCloseTask(CloseTask task) {
 }
 
 CoTask<void> MetaClient::scanCloseTask() {
+  KUTRACE_FOLLY_MARKER("MetaClient::scanCloseTask");
   ASSERT_NO_REQUEST_CONTEXT();
   XLOGF(DBG, "MetaClient scan background close tasks, count {}.", bgCloseTasks_.lock()->size());
   auto now = SteadyClock::now();
@@ -259,6 +260,7 @@ CoTryTask<MetaClient::ServerNode> MetaClient::getServerNode() {
 }
 
 CoTask<void> MetaClient::checkServers() {
+  KUTRACE_FOLLY_MARKER("MetaClient::checkServers");
   ASSERT_NO_REQUEST_CONTEXT();
 
   auto check = [&](ServerSelectionStrategy::NodeInfo node) -> CoTask<void> {
@@ -349,6 +351,8 @@ auto MetaClient::retry(Func &&func, Req &&req, RetryConfig retryConfig, std::fun
                                   retryConfig.retry_total_time().asMs());
   auto options = net::UserRequestOptions();
   options.timeout = retryConfig.rpc_timeout();
+
+  KUTRACE_FOLLY_MARKER(fmt::format("{}::{}", "MetaClient", opName));
 
   OperationRecorder::Guard record(OperationRecorder::client(), opName, req.user.uid);
   std::optional<ServerNode> server;

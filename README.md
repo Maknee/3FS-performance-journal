@@ -2,6 +2,13 @@
 
 All benchmark code is stored in `performance-journal`. Some changes will be made in the `src` code for benchmarking.
 
+# Building for debug
+
+```sh
+cmake -S . -B build -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_C_COMPILER=clang-14 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-ggdb3 -fno-omit-frame-pointer" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build build -j
+```
+
 #  Fire-Flyer File System
 
 [![Build](https://github.com/deepseek-ai/3fs/actions/workflows/build.yml/badge.svg)](https://github.com/deepseek-ai/3fs/actions/workflows/build.yml)

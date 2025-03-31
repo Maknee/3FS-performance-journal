@@ -175,6 +175,9 @@ struct MgmtdClient::Impl {
     for (bool retried = false;;) {
       auto &conn = getMgmtdConn(primaryMgmtdId_);
       auto &stub = conn.stub(*mgmtdStubFactory_);
+
+      KUTRACE_FOLLY_MARKER(fmt::format("MgmtdClient::{}", methodName), conn.nodeId);
+
       if (retried)
         XLOGF(INFO, "MgmtdClient: retry {} via {} {}", methodName, conn.nodeId, conn.addr());
       else
@@ -282,6 +285,7 @@ struct MgmtdClient::Impl {
       XLOGF(INFO, "MgmtdClient: AutoRefresh is disabled, skip");
       co_return;
     }
+    KUTRACE_FOLLY_MARKER("MgmtdClient::AutoRefresh");
     auto res = co_await refreshRoutingInfo(/*force=*/false);
     LOG_RESULT(DBG, res, "MgmtdClient: AutoRefresh");
 
@@ -295,6 +299,7 @@ struct MgmtdClient::Impl {
       XLOGF(INFO, "MgmtdClient: AutoHeartbeat is disabled, skip");
       co_return;
     }
+    KUTRACE_FOLLY_MARKER("MgmtdClient::AutoHeartbeat");
     auto res = co_await heartbeat();
     LOG_RESULT(DBG, res, "MgmtdClient: AutoHeartbeat");
 
@@ -308,6 +313,7 @@ struct MgmtdClient::Impl {
       XLOGF(INFO, "MgmtdClient: AutoExtendClientSession is disabled, skip");
       co_return;
     }
+    KUTRACE_FOLLY_MARKER("MgmtdClient::AutoExtendClientSession");
     ExtendClientSessionOp op;
     auto res = co_await invoke(op);
     LOG_RESULT(DBG, res, "MgmtdClient: AutoExtendClientSession");

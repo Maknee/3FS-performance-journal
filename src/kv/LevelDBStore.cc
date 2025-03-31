@@ -31,6 +31,7 @@ leveldb::Cache *sharedBlockCache(size_t capacity) {
 
 // get value corresponding to key.
 Result<std::string> LevelDBStore::get(std::string_view key) {
+  KUTRACE_FOLLY_MARKER("LevelDBStore::get");
   leveldb::ReadOptions options;
   std::string value;
   auto status = db_->Get(options, slice(key), &value);
@@ -49,6 +50,7 @@ Result<Void> LevelDBStore::iterateKeysWithPrefix(std::string_view prefix,
                                                  uint32_t limit,
                                                  IterateFunc func,
                                                  std::optional<std::string> *nextValidKey /* = nullptr */) {
+  KUTRACE_FOLLY_MARKER("LevelDBStore::iterateKeysWithPrefix");
   leveldb::ReadOptions options;
   options.fill_cache = config_.leveldb_iterator_fill_cache();
   std::unique_ptr<leveldb::Iterator> iterator{db_->NewIterator(options)};
@@ -76,6 +78,7 @@ Result<Void> LevelDBStore::iterateKeysWithPrefix(std::string_view prefix,
 
 // put a key-value pair.
 Result<Void> LevelDBStore::put(std::string_view key, std::string_view value, bool sync /* = false */) {
+  KUTRACE_FOLLY_MARKER("LevelDBStore::put");
   leveldb::WriteOptions options;
   options.sync = config_.sync_when_write() || sync;
   auto status = db_->Put(options, slice(key), slice(value));
@@ -89,6 +92,7 @@ Result<Void> LevelDBStore::put(std::string_view key, std::string_view value, boo
 
 // remove a key-value pair.
 Result<Void> LevelDBStore::remove(std::string_view key) {
+  KUTRACE_FOLLY_MARKER("LevelDBStore::remove");
   leveldb::WriteOptions options;
   options.sync = config_.sync_when_write();
   auto status = db_->Delete(options, slice(key));
@@ -102,12 +106,17 @@ Result<Void> LevelDBStore::remove(std::string_view key) {
 
 // batch operations.
 void LevelDBStore::LevelDBBatchOperations::put(std::string_view key, std::string_view value) {
+  KUTRACE_FOLLY_MARKER("LevelDBBatchOperations::put");
   writeBatch_.Put(slice(key), slice(value));
 }
 
-void LevelDBStore::LevelDBBatchOperations::remove(std::string_view key) { writeBatch_.Delete(slice(key)); }
+void LevelDBStore::LevelDBBatchOperations::remove(std::string_view key) {
+  KUTRACE_FOLLY_MARKER("LevelDBBatchOperations::remove");
+  writeBatch_.Delete(slice(key));
+}
 
 Result<Void> LevelDBStore::LevelDBBatchOperations::commit() {
+  KUTRACE_FOLLY_MARKER("LevelDBBatchOperations::commit");
   if (writeBatch_.ApproximateSize() == 0) {
     return Void{};
   }
