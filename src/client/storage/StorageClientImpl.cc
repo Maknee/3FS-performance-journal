@@ -20,6 +20,7 @@
 #include "common/utils/StatusCodeConversion.h"
 #include "common/utils/StringUtils.h"
 #include "kutrace_userlib/kutrace_lib.h"
+#include "kutrace_userlib/kutrace_rpc_logger.h"
 
 namespace hf3fs::storage::client {
 
@@ -827,7 +828,7 @@ CoTryTask<Rsp> StorageClientImpl::callMessengerMethod(StorageMessenger &messenge
                                                       ClientRequestContext &requestCtx,
                                                       const hf3fs::flat::NodeInfo &nodeInfo,
                                                       const Req &request) {
-  KUTRACE_FOLLY_MARKER(fmt::format("StorageClientImpl:callMessengerMethod:{}", magic_enum::enum_name(requestCtx.methodType)), requestCtx.userCallId);
+  KUTRACE_FOLLY_MARKER_RPC_NUM(fmt::format("StorageClientImpl:callMessengerMethod:{}", magic_enum::enum_name(requestCtx.methodType)));
   monitor::ScopedLatencyWriter latencyWriter(request_latency, requestCtx.requestTagSet);
   monitor::ScopedCounterWriter inflightRequests(inflight_requests,
                                                 atomic_inflight_requests.at(requestCtx.methodType),
@@ -849,19 +850,23 @@ CoTryTask<Rsp> StorageClientImpl::callMessengerMethod(StorageMessenger &messenge
         serde::Timestamp timestamp;
 
 #ifdef KUTRACE_RPC_ENABLE
-        // if (kutrace::RPCLogger::get()) {
-        //   kutrace::NetworkAddress client_addr("0.0.0.0", 0);
-        //   kutrace::NetworkAddress server_addr(address.ip, address.port);
+        if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+          auto rpcid = KUTraceRPCInfo::get()->rpc_id;
 
-        //   kutrace::RPCLogger::get()->log_client_send(
-        //     requestCtx.userCallId,
-        //     0,
-        //     client_addr,
-        //     server_addr,
-        //     magic_enum::enum_name(requestCtx.methodType),
-        //     kutrace::RPCMessage{}
-        //   );
-        // }
+          kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+          kutrace::NetworkAddress server_addr(address.ip, address.port);
+
+          std::string method_name = fmt::format("StorageClientImpl::callMessengerMethod:{}", magic_enum::enum_name(requestCtx.methodType));
+
+          kutrace::RPCLogger::get()->log_client_send(
+            rpcid,
+            0,
+            client_addr,
+            server_addr,
+            method_name,
+            kutrace::RPCMessage{}
+          );
+        }
 #endif
         auto response =
             FAULT_INJECTION_POINT(requestCtx.debugFlags.injectClientError(),
@@ -869,19 +874,23 @@ CoTryTask<Rsp> StorageClientImpl::callMessengerMethod(StorageMessenger &messenge
                                   (co_await std::invoke(Method, messenger, address, request, &options, &timestamp)));
 
 #ifdef KUTRACE_RPC_ENABLE
-        // if (kutrace::RPCLogger::get()) {
-        //     kutrace::NetworkAddress client_addr("0.0.0.0", 0);
-        //     kutrace::NetworkAddress server_addr(address.ip, address.port);
+        if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+          auto rpcid = KUTraceRPCInfo::get()->rpc_id;
 
-        //     kutrace::RPCStatus status = response ? kutrace::RPCStatus::Success : kutrace::RPCStatus::Fail;
+          kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+          kutrace::NetworkAddress server_addr(address.ip, address.port);
 
-        //     kutrace::RPCLogger::get()->log_client_recv(
-        //         requestCtx.userCallId, 0, client_addr, server_addr, magic_enum::enum_name(requestCtx.methodType), status, kutrace::RPCMessage{},
-        //         timestamp.clientSerialized,
-        //         timestamp.serverReceived,
-        //         timestamp.serverSerialized
-        //     );
-        // }
+          kutrace::RPCStatus status = response ? kutrace::RPCStatus::Success : kutrace::RPCStatus::Fail;
+
+          std::string method_name = fmt::format("StorageClientImpl::callMessengerMethod:{}", magic_enum::enum_name(requestCtx.methodType));
+
+          kutrace::RPCLogger::get()->log_client_recv(
+              rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+              timestamp.clientCalled,
+              timestamp.serverReceived,
+              timestamp.serverSerialized
+          );
+        }
 #endif
 
         XLOGF_IF(WARN,
@@ -1181,7 +1190,7 @@ CoTryTask<void> sendOpsWithRetry(ClientRequestContext &requestCtx,
                                  const std::vector<Op *> &ops,
                                  auto &&sendOps,
                                  const RetryOptions &options) {
-  KUTRACE_FOLLY_MARKER(fmt::format("StorageClientImpl:sendOpsWithRetry:{}", magic_enum::enum_name(requestCtx.methodType)), requestCtx.userCallId);
+  KUTRACE_FOLLY_MARKER_RPC_NUM(fmt::format("StorageClientImpl:sendOpsWithRetry:{}", magic_enum::enum_name(requestCtx.methodType)));
   ExponentialBackoffRetry backoffRetry(options.init_wait_time().asMs(),
                                        options.max_wait_time().asMs(),
                                        options.max_retry_time().asMs());
@@ -1238,9 +1247,50 @@ CoTryTask<void> sendOpsWithRetry(ClientRequestContext &requestCtx,
     requestCtx.initDebugFlags();
 
     auto requestStartTime = SteadyClock::now();
+#ifdef KUTRACE_RPC_ENABLE
+    auto start = kutrace::RPCLogger::get_current_usec();
+    if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+      auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+      kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+      kutrace::NetworkAddress server_addr("0.0.0.0", 0);
+
+      std::string method_name = fmt::format("StorageClientImpl::sendOpsWithRetry:{}", magic_enum::enum_name(requestCtx.methodType));
+
+      kutrace::RPCLogger::get()->log_client_send(
+        rpcid,
+        0,
+        client_addr,
+        server_addr,
+        method_name,
+        kutrace::RPCMessage{}
+      );
+    }
+#endif
+
     co_await sendOps(pendingOps);
     auto requestLatency = std::chrono::duration_cast<std::chrono::milliseconds>(SteadyClock::now() - requestStartTime);
     auto waitTime = std::max(std::chrono::milliseconds(0), requestTimeout - requestLatency);
+
+#ifdef KUTRACE_RPC_ENABLE
+    if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+      auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+      kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+      kutrace::NetworkAddress server_addr("0.0.0.0", 0);
+
+      kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+      std::string method_name = fmt::format("StorageClientImpl::sendOpsWithRetry:{}", magic_enum::enum_name(requestCtx.methodType));
+
+      kutrace::RPCLogger::get()->log_client_recv(
+          rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+          start,
+          start,
+          start
+      );
+    }
+#endif
 
     XLOGF_IF(INFO,
              (retryCount > 0 || requestLatency > requestTimeout * 2),
@@ -1836,6 +1886,7 @@ CoTryTask<void> StorageClientImpl::batchWriteWithoutRetry(ClientRequestContext &
                                                           const std::vector<WriteIO *> &writeIOs,
                                                           const flat::UserInfo &userInfo,
                                                           const WriteOptions &options) {
+  KUTRACE_FOLLY_MARKER_RPC_NUM(fmt::format("StorageClientImpl:batchWriteWithoutRetry:{}", magic_enum::enum_name(requestCtx.methodType)));
   // collect target/chain infos
 
   TargetSelectionOptions targetSelectionOptions = options.targetSelection();
@@ -1898,6 +1949,7 @@ CoTryTask<void> StorageClientImpl::sendWriteRequest(ClientRequestContext &reques
                                                     const hf3fs::flat::NodeInfo &nodeInfo,
                                                     const flat::UserInfo &userInfo,
                                                     const WriteOptions &options) {
+  KUTRACE_FOLLY_MARKER_RPC_NUM(fmt::format("StorageClientImpl:sendWriteRequest:{}", magic_enum::enum_name(requestCtx.methodType)));
   // create write request and communicate with storage service
 
   hf3fs::storage::VersionedChainId vChainId{writeIO->routingTarget.chainId,
@@ -1967,6 +2019,7 @@ CoTryTask<void> StorageClientImpl::sendWriteRequestsSequentially(
     NodeId nodeId,
     const flat::UserInfo &userInfo,
     const WriteOptions &options) {
+  KUTRACE_FOLLY_MARKER_RPC_NUM(fmt::format("StorageClientImpl:sendWriteRequestsSequentially:{}", magic_enum::enum_name(requestCtx.methodType)));
   auto nodeInfo = getNodeInfo(routingInfo, hf3fs::flat::NodeId(nodeId));
 
   if (!nodeInfo) {

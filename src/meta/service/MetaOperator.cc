@@ -71,14 +71,9 @@ using namespace std::chrono_literals;
 template <typename Func, typename Arg>
 auto MetaOperator::runOp(Func &&func, Arg &&arg)
     -> CoTryTask<typename std::invoke_result_t<Func, MetaStore, Arg &&>::element_type::RspT> {
-  uint64_t trace_id = 0;
-  // Extract rpcId if possible from 'arg' (the request object)
-  if constexpr (std::is_base_of_v<ReqBase, std::remove_reference_t<Arg>>) {
-      trace_id = arg.rpcId; // Assuming rpcId was added to ReqBase
-  }
   std::string_view opName = typeid(std::remove_cvref_t<Func>).name();
-  // auto opName = MetaSerde<>::getRpcName(arg); // Get operation name
-  KUTRACE_FOLLY_MARKER(opName, trace_id);
+  // auto opName = MetaSerde<>::getRpcName(func); // Get operation name
+  KUTRACE_FOLLY_MARKER(fmt::format("MetaOperator::{}", opName));
 
 #ifndef NDEBUG
   auto fi = FaultInjection::clone();

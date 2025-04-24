@@ -11,6 +11,7 @@
   CoTryTask<RESP> MetaServiceStub<Context>::NAME(const REQ &req,                         \
                                                  const net::UserRequestOptions &options, \
                                                  hf3fs::serde::Timestamp *timestamp) {   \
+    KUTRACE_FOLLY_MARKER("MetaServiceStub::" #NAME);                                     \
     co_return co_await MetaSerde<>::NAME<Context>(context_, req, &options, timestamp);   \
   }
 

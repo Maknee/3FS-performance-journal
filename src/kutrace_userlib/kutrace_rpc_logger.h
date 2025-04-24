@@ -1,9 +1,8 @@
+#pragma once
+
 // rpc_logger.h
 // Simple header-only RPC logging API to track client-server communications
 // Based on BinaryLogRecord structure
-
-#ifndef RPC_LOGGER_H
-#define RPC_LOGGER_H
 
 #include <string>
 #include <string_view>
@@ -24,6 +23,14 @@
 #include <algorithm>
 // #include <signal.h>
 
+// Fetch it
+// wget https://raw.githubusercontent.com/cameron314/concurrentqueue/refs/heads/master/concurrentqueue.h
+#define KUTRACE_RPC_USE_BACKGROUND_THREAD
+#ifdef KUTRACE_RPC_USE_BACKGROUND_THREAD
+#undef BLOCK_SIZE
+#include "concurrentqueue.h"
+#endif
+
 #define KUTRACE_RPC_ENABLE
 
 namespace kutrace {
@@ -31,6 +38,9 @@ namespace kutrace {
 // Constants
 const int kMaxLogDataSize = 4;
 const int kMaxMethodNameSize = 64;
+
+#ifndef KUTRACE_RPC_TYPES_DEFINED
+#define KUTRACE_RPC_TYPES_DEFINED
 
 // RPC types
 enum class RPCType : uint16_t {
@@ -100,6 +110,8 @@ struct RPCMessage {
         : data(reinterpret_cast<const uint8_t*>(str)), length(strlen(str)) {}
 };
 
+#endif
+
 // Binary log record structure (96 bytes)
 typedef struct {
     uint32_t rpcid;
@@ -142,6 +154,10 @@ public:
     
     // Destructor - closes log file
     ~RPCLogger() {
+        m_ready = false;
+        if (worker_thread.joinable()) {
+            worker_thread.join();
+        }
         if (m_logFile.is_open()) {
             m_logFile.close();
         }
@@ -150,7 +166,7 @@ public:
     // Check if logger is ready (file opened successfully)
     bool is_ready() const { return m_ready; }
 
-    void open(const std::string& filename) {
+    void open(const std::string& filename, std::size_t batch_size = 10000, std::size_t timeout_ms = 10) {
         std::lock_guard<std::mutex> l(m);
         m_logFile.open(filename, std::ios::out | std::ios::binary | std::ios::trunc);
         if (m_logFile.is_open()) {
@@ -158,6 +174,36 @@ public:
         } else {
             std::cerr << "Failed to open log file: " << filename << std::endl;
         }
+
+#ifdef KUTRACE_RPC_USE_BACKGROUND_THREAD
+        worker_thread = std::thread([this, batch_size, timeout_ms]() {
+#if defined(__linux__) || defined(__unix__)
+            pthread_setname_np(pthread_self(), "RPCLoggerWorker");
+#endif
+            std::vector<BinaryLogRecord> batch_records;
+            batch_records.resize(batch_size);
+            std::size_t index = 0;
+            auto start = std::chrono::steady_clock::now();
+            while (m_ready) {
+                if (queue.try_dequeue(batch_records[index])) {
+                    index++;
+                } else {
+                    // Sleep for a bit
+                    std::this_thread::sleep_for(std::chrono::nanoseconds(500));
+                }
+                auto end = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+                // Flush
+                if (should_flush || index == batch_size || elapsed.count() > static_cast<long>(timeout_ms)) {
+                    m_logFile.write(reinterpret_cast<const char*>(batch_records.data()), index * sizeof(BinaryLogRecord));
+                    m_logFile.flush();
+                    index = 0;
+                    start = end;
+                    // should_flush.store(true, std::memory_order_relaxed);
+                }
+            }
+        });
+#endif        
     }
 
     // Client-side logging
@@ -462,6 +508,7 @@ public:
     
     // Helper to get current time in microseconds
     static int64_t get_current_usec() {
+        // return std::chrono::steady_clock::now().time_since_epoch().count();
         struct timeval tv;
         gettimeofday(&tv, NULL);
         return (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
@@ -502,7 +549,12 @@ private:
     std::fstream m_logFile;
     std::atomic<bool> m_ready = false;
     inline static std::mutex m;
-    
+#ifdef KUTRACE_RPC_USE_BACKGROUND_THREAD
+    std::atomic<bool> should_flush = false;
+    moodycamel::ConcurrentQueue<BinaryLogRecord> queue;
+    std::thread worker_thread;
+#endif
+
     // 2**0.0 through 2**0.9
     static constexpr double kPowerTwoTenths[10] = {
         1.0000, 1.0718, 1.1487, 1.2311, 1.3195, 
@@ -551,9 +603,13 @@ private:
     // Write record to file
     void write_record(const BinaryLogRecord& record) {
         if (m_ready) {
+#ifdef KUTRACE_RPC_USE_BACKGROUND_THREAD
+            queue.enqueue(record);
+#else
             std::lock_guard<std::mutex> l(m);
             m_logFile.write(reinterpret_cast<const char*>(&record), sizeof(BinaryLogRecord));
-            // m_logFile.flush();
+            m_logFile.flush();
+#endif
         }
     }
     
@@ -689,13 +745,13 @@ private:
 // For GCC with strict warnings
 #define KUTRACE_FOLLY_MARKER_IMPL(label) \
   kutrace::mark_e(label); \
-  auto guard_kutrace = folly::makeGuard([&] { \
+  auto guard_kutrace_##__LINE__ = folly::makeGuard([&] { \
       kutrace::mark_e(fmt::format("/{}", label)); \
   });
 
 #define KUTRACE_FOLLY_MARKER_IMPL_ARG(label, arg) \
   kutrace::mark_e(label, arg); \
-  auto guard_kutrace = folly::makeGuard([&] { \
+  auto guard_kutrace_##__LINE__ = folly::makeGuard([&] { \
       kutrace::mark_e(fmt::format("/{}", label), arg); \
   });
 
@@ -705,4 +761,92 @@ private:
 #define KUTRACE_FOLLY_MARKER(...) \
   GET_MACRO(__VA_ARGS__, KUTRACE_FOLLY_MARKER_IMPL_ARG, KUTRACE_FOLLY_MARKER_IMPL)(__VA_ARGS__)
 
-#endif // RPC_LOGGER_H
+#ifdef KUTRACE_RPC_ENABLE
+
+#define KUTRACE_FOLLY_MARKER_RPC_NUM(label) \
+    if (KUTraceRPCInfo::get()) { \
+        auto rpcid = KUTraceRPCInfo::get()->rpc_id; \
+        KUTRACE_FOLLY_MARKER_IMPL_ARG(label, rpcid); \
+    } else { \
+        KUTRACE_FOLLY_MARKER_IMPL(label); \
+    }
+#else
+#define KUTRACE_FOLLY_MARKER_RPC_NUM(label) \
+    KUTRACE_FOLLY_MARKER_IMPL(label);
+#endif
+
+
+
+
+#include <folly/io/async/Request.h>
+#include <atomic>
+#include <string>
+
+class KUTraceRPCInfo : public folly::RequestData {
+public:
+  static constexpr const char* k_token_name = "KUTraceRPCinfo";
+  
+  static folly::RequestToken const& token() {
+    static folly::RequestToken const token(k_token_name);
+    return token;
+  }
+
+  static inline KUTraceRPCInfo* get() {
+    auto rpcinfo = folly::RequestContext::get()->getContextData(token());
+    if (!rpcinfo) {
+        return nullptr;
+    }
+    return reinterpret_cast<KUTraceRPCInfo*>(rpcinfo);
+  }
+
+  // Required override from folly::RequestData
+  bool hasCallback() override { return false; }
+
+  // Constructor
+  KUTraceRPCInfo(uint64_t rpc_id_, std::string operation_type_)
+    : rpc_id(rpc_id_), operation_type(std::move(operation_type_)) {
+        last_rpc_id = rpc_id;
+        last_operation_type = operation_type;
+    }
+
+  // Helper to set this RPC info in the current request context
+  static auto set(uint64_t rpc_id_, std::string_view operation_type_) {
+    return folly::ShallowCopyRequestContextScopeGuard(
+      KUTraceRPCInfo::token(), 
+      std::make_unique<KUTraceRPCInfo>(rpc_id_, std::string(operation_type_))
+    );
+  }
+
+  // New method that increments a counter with relaxed memory ordering
+  static auto set_with_next_rpc_id(std::string_view operation_type_) {
+    uint64_t rpc_id_ = next_rpc_id.fetch_add(1, std::memory_order_relaxed);
+    
+    return folly::ShallowCopyRequestContextScopeGuard(
+      KUTraceRPCInfo::token(), 
+      std::make_unique<KUTraceRPCInfo>(rpc_id_, std::string(operation_type_))
+    );
+  }
+
+  static auto set_with_cached_rpc_id(std::string_view operation_type_ = "") {
+    if (operation_type_.empty()) {
+        operation_type_ = last_operation_type;
+    }
+    
+    return folly::ShallowCopyRequestContextScopeGuard(
+      KUTraceRPCInfo::token(), 
+      std::make_unique<KUTraceRPCInfo>(last_rpc_id, std::string(operation_type_))
+    );
+  }
+
+  // Description method
+  std::string describe() const { 
+    return "RPC ID: " + std::to_string(rpc_id) + ", Type: " + operation_type; 
+  }
+
+public:
+  uint64_t rpc_id;
+  std::string operation_type;
+  static inline std::atomic<uint64_t> next_rpc_id = 0;
+  static inline std::string last_operation_type;
+  static inline uint64_t last_rpc_id = 0;
+};

@@ -48,6 +48,30 @@ class Processor {
         config_(config) {}
 
   void processMsg(MessageWrapper wrapper, TransportPtr tr) {
+    KUTRACE_FOLLY_MARKER("Processor::processMsg");
+
+#ifdef KUTRACE_RPC_ENABLE
+    auto start = SteadyClock::now().time_since_epoch().count();
+    auto addr = tr->peerIP().toSockAddr();
+    if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+      auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+      kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+      kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+      std::string_view method_name = "TcpSocket::recv";
+
+      start = kutrace::RPCLogger::get()->log_client_send(
+        rpcid,
+        0,
+        client_addr,
+        server_addr,
+        method_name,
+        kutrace::RPCMessage{}
+      );
+    }
+#endif
+
     auto num = processingRequestsNum(flags_.load(std::memory_order_acquire));
     if (UNLIKELY(num >= config_.max_processing_requests_num())) {
       XLOGF(WARN, "Too many processing requests: {}, unpack message in current thread.", num);
@@ -56,6 +80,27 @@ class Processor {
       executor_.pickNext().add(
           [this, wrapper = std::move(wrapper), tr = std::move(tr)]() mutable { unpackMsg(wrapper, tr); });
     }
+
+#ifdef KUTRACE_RPC_ENABLE
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+    std::string_view method_name = "TcpSocket::recv";
+
+    kutrace::RPCLogger::get()->log_client_recv(
+        rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+        start,
+        start,
+        start
+    );
+  }
+#endif
+
   }
 
   void setCoroutinesPoolGetter(auto &&g) { coroutinesPoolGetter_ = std::forward<decltype(g)>(g); }
@@ -83,6 +128,7 @@ class Processor {
 
  protected:
   void unpackMsg(MessageWrapper &wrapper, TransportPtr &tr) {
+    KUTRACE_FOLLY_MARKER("Processor::unpackMsg");
     while (wrapper.length()) {
       // 1. check the message is complete.
       if (UNLIKELY(!wrapper.headerComplete() || !wrapper.messageComplete())) {
@@ -156,6 +202,7 @@ class Processor {
   }
 
   CoTask<void> processSerdeRequest(IOBufPtr buf, serde::MessagePacket<> packet, TransportPtr tr) {
+    KUTRACE_FOLLY_MARKER("Processor::processSerdeRequest");
     // decrease the count in any case.
     auto guard = folly::makeGuard([&] { flags_ -= kCountInc; });
 

@@ -265,6 +265,7 @@ class In {
 
 template <class O>
 inline void serialize(auto &&o, Out<O> &out) {
+  KUTRACE_FOLLY_MARKER("serde::serialize");
   using T = std::decay_t<decltype(o)>;
   constexpr bool isBinaryOut = requires { typename Out<O>::is_binary_out; };
   if constexpr (requires { o.serdeToReadable(); } && !isBinaryOut) {
@@ -463,6 +464,7 @@ template <typename... Ts>
 constexpr bool is_auto_fallback_variant_v<AutoFallbackVariant<Ts...>> = true;
 
 inline Result<Void> deserialize(auto &o, auto &&in) requires is_specialization<std::decay_t<decltype(in)>, In> {
+  KUTRACE_FOLLY_MARKER("serde::deserialize");
   using T = std::decay_t<decltype(o)>;
   using I = std::decay_t<decltype(in)>;
   constexpr bool isBinaryIn = requires { typename I::is_binary_in; };
@@ -838,12 +840,14 @@ inline std::string toTomlString(const auto &o) {
 }
 
 inline std::string toJsonString(const auto &o, bool sortKeys = false, bool prettyFormatting = false) {
+  KUTRACE_FOLLY_MARKER("serde::toJsonString");
   Out<JsonObject> out;
   serialize(o, out);
   return out.toString(sortKeys, prettyFormatting);
 }
 
 inline Result<Void> fromJsonString(auto &o, std::string_view str) {
+  KUTRACE_FOLLY_MARKER("serde::fromJsonString");
   return In<JsonObject>::parse(str, [&](const JsonObject &obj) { return deserialize(o, In<JsonObject>(obj)); });
 }
 

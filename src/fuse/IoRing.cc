@@ -13,6 +13,7 @@
 
 namespace hf3fs::fuse {
 std::vector<IoRingJob> IoRing::jobsToProc(int maxJobs) {
+  KUTRACE_FOLLY_MARKER("IoRing::jobsToProc");
   std::vector<IoRingJob> jobs;
 
   std::lock_guard lock(cqeMtx_);
@@ -86,6 +87,24 @@ CoTask<void> IoRing::process(
   static monitor::DistributionRecorder distinctBufsDist("usrbio.piov.distinct_bufs",
                                                         monitor::TagSet{{"mount_name", mountName}});
   static monitor::CountRecorder bwCount("usrbio.piov.bw", monitor::TagSet{{"mount_name", mountName}});
+
+#ifdef KUTRACE_RPC_ENABLE
+  auto kutrace_guard = KUTraceRPCInfo::set_with_next_rpc_id("IoRing::process");
+  auto timestamp = serde::Timestamp{UtcClock::now().time_since_epoch().count()};
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr("0.0.0.0", 0);
+
+    std::string_view method_name = "IoRing::process";
+
+    auto start_time = kutrace::RPCLogger::get()->log_client_send(rpcid, 0, client_addr, server_addr, method_name, kutrace::RPCMessage{});
+
+    timestamp.clientCalled = start_time;
+    timestamp.clientSerialized = start_time;
+  }
+#endif
 
   auto start = SteadyClock::now(), overallStart = start;
   std::string ioType = forRead_ ? "read" : "write";
@@ -221,6 +240,34 @@ CoTask<void> IoRing::process(
     }
   }
 
+#ifdef KUTRACE_RPC_ENABLE
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr("0.0.0.0", 0);
+
+    kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+    std::string_view method_name = "IoRing::process";
+
+    auto current_time = UtcClock::now().time_since_epoch().count();
+    timestamp.serverReceived = current_time;
+    timestamp.serverWaked = current_time;
+    timestamp.serverProcessed = current_time;
+    timestamp.serverSerialized = current_time;
+    timestamp.clientReceived = current_time;
+    timestamp.clientWaked = current_time;
+
+    kutrace::RPCLogger::get()->log_client_recv(
+        rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+        timestamp.clientCalled,
+        timestamp.serverReceived,
+        timestamp.serverSerialized
+    );
+  }
+#endif
+
   auto newSpt = (spt + toProc) % entries;
 
   std::vector<IoSqe> sqes(toProc);
@@ -269,7 +316,10 @@ CoTask<void> IoRing::process(
     processing_ -= toProc;
   }
 
-  sem_post(cqeSem.get());
+  {
+    KUTRACE_FOLLY_MARKER("IoRing::process:sem_post");
+    sem_post(cqeSem.get());
+  }
 
   size_t doneBytes = 0;
   for (auto r : res) {

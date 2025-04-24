@@ -18,6 +18,7 @@ hf3fs::Result<Void> PioV::addRead(size_t idx,
                                   size_t len,
                                   void *buf,
                                   storage::client::IOBuffer &memh) {
+  KUTRACE_FOLLY_MARKER("PioV::addRead");
   if (!wios_.empty()) {
     return makeError(StatusCode::kInvalidArg, "adding read to write operations");
   } else if (!inode.isFile()) {
@@ -59,6 +60,7 @@ hf3fs::Result<Void> PioV::addWrite(size_t idx,
                                    size_t len,
                                    const void *buf,
                                    storage::client::IOBuffer &memh) {
+  KUTRACE_FOLLY_MARKER("PioV::addWrite");
   if (!rios_.empty()) {
     return makeError(StatusCode::kInvalidArg, "adding write to read operations");
   } else if (!inode.isFile()) {
@@ -101,6 +103,7 @@ Result<Void> PioV::chunkIo(
     off_t off,
     size_t len,
     std::function<void(storage::ChainId, storage::ChunkId, uint32_t, uint32_t, uint32_t)> &&consumeChunk) {
+  KUTRACE_FOLLY_MARKER("PioV::chunkIo");
   const auto &f = inode.asFile();
   auto chunkSize = f.layout.chunkSize;
   auto chunkOff = off % chunkSize;
@@ -130,6 +133,7 @@ Result<Void> PioV::chunkIo(
 }
 
 CoTryTask<void> PioV::executeRead(const UserInfo &userInfo, const storage::client::ReadOptions &options) {
+  KUTRACE_FOLLY_MARKER("PioV::executeRead");
   assert(wios_.empty() && trops_.empty());
 
   if (rios_.empty()) {
@@ -140,6 +144,7 @@ CoTryTask<void> PioV::executeRead(const UserInfo &userInfo, const storage::clien
 }
 
 CoTryTask<void> PioV::executeWrite(const UserInfo &userInfo, const storage::client::WriteOptions &options) {
+  KUTRACE_FOLLY_MARKER("PioV::executeWrite");
   assert(rios_.empty());
 
   if (wios_.empty()) {
@@ -266,6 +271,7 @@ void concatIoRes(bool read, std::vector<ssize_t> &res, const Io &ios, bool allow
 }
 
 void PioV::finishIo(bool allowHoles) {
+  KUTRACE_FOLLY_MARKER("PioV::finishIo");
   if (wios_.empty()) {
     concatIoRes(true, res_, rios_, allowHoles);
   } else {

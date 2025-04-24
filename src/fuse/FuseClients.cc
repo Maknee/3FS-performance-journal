@@ -20,6 +20,7 @@
 #include "common/utils/SysResource.h"
 #include "fbs/meta/Common.h"
 #include "fbs/mgmtd/Rpc.h"
+#include "kutrace_userlib/kutrace_rpc_logger.h"
 #include "stubs/MetaService/MetaServiceStub.h"
 #include "stubs/common/RealStubFactory.h"
 #include "stubs/mgmtd/MgmtdServiceStub.h"
@@ -277,6 +278,7 @@ CoTask<void> FuseClients::ioRingWorker(int i, int ths) {
       while (true) {
         auto lookupFiles =
             [this](std::vector<std::shared_ptr<RcInode>> &ins, const IoArgs *args, const IoSqe *sqes, int sqec) {
+              KUTRACE_FOLLY_MARKER("ioRingWorker::lookupFiles");
               auto lastIid = 0ull;
 
               std::lock_guard lock(inodesMutex);
@@ -295,6 +297,7 @@ CoTask<void> FuseClients::ioRingWorker(int i, int ths) {
             };
         auto lookupBufs =
             [this](std::vector<Result<lib::ShmBufForIO>> &bufs, const IoArgs *args, const IoSqe *sqe, int sqec) {
+              KUTRACE_FOLLY_MARKER("ioRingWorker::lookupBufs");
               auto lastId = Uuid::zero();
               std::shared_ptr<lib::ShmBuf> lastShm;
 

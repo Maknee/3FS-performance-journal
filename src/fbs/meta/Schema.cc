@@ -75,6 +75,7 @@ Result<ChainId> File::getChainId(const Inode &inode,
                                  size_t offset,
                                  const flat::RoutingInfo &routingInfo,
                                  uint16_t track) const {
+  KUTRACE_FOLLY_MARKER("File::getChainId");
   if ((!layout.chunkSize || !layout.stripeSize)) {
     XLOGF(CRITICAL, "File {} chunkSize {}, stripeSize {}.", inode.id, layout.chunkSize, layout.stripeSize);
     return makeError(MetaCode::kInvalidFileLayout, !layout.chunkSize ? "empty chunksize" : "empty stripesize");

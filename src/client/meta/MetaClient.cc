@@ -352,12 +352,13 @@ auto MetaClient::retry(Func &&func, Req &&req, RetryConfig retryConfig, std::fun
   auto options = net::UserRequestOptions();
   options.timeout = retryConfig.rpc_timeout();
 
-  KUTRACE_FOLLY_MARKER(fmt::format("{}::{}", "MetaClient", opName));
+  KUTRACE_FOLLY_MARKER(fmt::format("MetaClient:retry:{}", opName));
 
   OperationRecorder::Guard record(OperationRecorder::client(), opName, req.user.uid);
   std::optional<ServerNode> server;
 
   auto getServer = [&]() -> CoTryTask<void> {
+    KUTRACE_FOLLY_MARKER("MetaClient::getServer");
     if (server.has_value()) {
       co_return Void{};
     }
@@ -389,6 +390,7 @@ auto MetaClient::retry(Func &&func, Req &&req, RetryConfig retryConfig, std::fun
 
     Status error(MetaCode::kFoundBug);
     {
+      KUTRACE_FOLLY_MARKER(fmt::format("MetaClient:{}", opName));
       SemaphoreGuard concurrentReq(concurrentReqSemaphore_);
       co_await concurrentReq.coWait();
 
@@ -399,7 +401,40 @@ auto MetaClient::retry(Func &&func, Req &&req, RetryConfig retryConfig, std::fun
       // }
 
       serde::Timestamp timestamp;
+#ifdef KUTRACE_RPC_ENABLE
+      if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+        auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+        
+        kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+        kutrace::NetworkAddress server_addr(server->node.address.ip, server->node.address.port);
+
+        std::string method_name = fmt::format("MetaClient:retry:{}", opName);
+
+        kutrace::RPCLogger::get()->log_client_send(rpcid, 0, client_addr, server_addr, method_name, kutrace::RPCMessage{});
+      }
+#endif
+
       auto result = co_await (server->stub.get()->*func)(std::forward<Req>(req), options, &timestamp);
+#ifdef KUTRACE_RPC_ENABLE
+      if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+        auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+        kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+        kutrace::NetworkAddress server_addr(server->node.address.ip, server->node.address.port);
+
+        kutrace::RPCStatus status = ErrorHandling::success(result) ? kutrace::RPCStatus::Success : kutrace::RPCStatus::Fail;
+
+        std::string method_name = fmt::format("MetaClient:retry:{}", opName);
+
+        kutrace::RPCLogger::get()->log_client_recv(
+            rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+            timestamp.clientCalled,
+            timestamp.serverReceived,
+            timestamp.serverSerialized
+        );
+      }
+#endif
+
       RECORD_TIMESATAMP(opName, result, timestamp);
       if (ErrorHandling::success(result)) {
         // success
@@ -983,3 +1018,4 @@ CoTryTask<void> MetaClient::lockDirectory(const UserInfo &userInfo,
 }
 
 }  // namespace hf3fs::meta::client
+

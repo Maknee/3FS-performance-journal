@@ -185,29 +185,38 @@ void Transaction::cancel() { fdb_transaction_cancel(tr_.get()); }
   return fdb_transaction_set_option(tr_.get(), option, TOU8(value));
 }
 
-void Transaction::setReadVersion(int64_t version) { fdb_transaction_set_read_version(tr_.get(), version); }
+void Transaction::setReadVersion(int64_t version) {
+  KUTRACE_FOLLY_MARKER("fdb::setReadVersion");
+  fdb_transaction_set_read_version(tr_.get(), version);
+}
 
 Task<Int64Result> Transaction::getReadVersion() {
+  KUTRACE_FOLLY_MARKER("fdb::getReadVersion");
   co_return co_await Int64Result::toTask(fdb_transaction_get_read_version(tr_.get()));
 }
 
 Task<Int64Result> Transaction::getApproximateSize() {
+  KUTRACE_FOLLY_MARKER("fdb::getApproximateSize");
   co_return co_await Int64Result::toTask(fdb_transaction_get_approximate_size(tr_.get()));
 }
 
 Task<KeyResult> Transaction::getVersionstamp() {
+  KUTRACE_FOLLY_MARKER("fdb::getVersionstamp");
   co_return co_await KeyResult::toTask(fdb_transaction_get_versionstamp(tr_.get()));
 }
 
 Task<ValueResult> Transaction::get(std::string_view key, fdb_bool_t snapshot /* = false */) {
+  KUTRACE_FOLLY_MARKER("fdb::get");
   co_return co_await ValueResult::toTask(fdb_transaction_get(tr_.get(), TOU8(key), snapshot));
 }
 
 Task<KeyResult> Transaction::getKey(const KeySelector &selector, fdb_bool_t snapshot /* = false */) {
+  KUTRACE_FOLLY_MARKER("fdb::getKey");
   co_return co_await KeyResult::toTask(fdb_transaction_get_key(tr_.get(), SELECTOR(selector), snapshot));
 }
 
 Task<StringArrayResult> Transaction::getAddressesForKey(std::string_view key) {
+  KUTRACE_FOLLY_MARKER("fdb::getAddressesForKey");
   co_return co_await StringArrayResult::toTask(fdb_transaction_get_addresses_for_key(tr_.get(), TOU8(key)));
 }
 
@@ -218,6 +227,7 @@ Task<KeyValueArrayResult> Transaction::getRange(const KeySelector &begin,
                                                 bool snapshot /* = false */,
                                                 bool reverse /* = false */,
                                                 FDBStreamingMode streamingMode /* = FDB_STREAMING_MODE_SERIAL */) {
+  KUTRACE_FOLLY_MARKER("fdb::getRange");
   co_return co_await KeyValueArrayResult::toTask(fdb_transaction_get_range(tr_.get(),
                                                                            SELECTOR(begin),
                                                                            SELECTOR(end),
@@ -230,20 +240,24 @@ Task<KeyValueArrayResult> Transaction::getRange(const KeySelector &begin,
 }
 
 Task<Int64Result> Transaction::getEstimatedRangeSizeBytes(const KeyRangeView &range) {
+  KUTRACE_FOLLY_MARKER("fdb::getEstimatedRangeSizeBytes");
   co_return co_await Int64Result::toTask(
       fdb_transaction_get_estimated_range_size_bytes(tr_.get(), TOU8(range.beginKey), TOU8(range.endKey)));
 }
 
 Task<KeyArrayResult> Transaction::getRangeSplitPoints(const KeyRangeView &range, int64_t chunkSize) {
+  KUTRACE_FOLLY_MARKER("fdb::getRangeSplitPoints");
   co_return co_await KeyArrayResult::toTask(
       fdb_transaction_get_range_split_points(tr_.get(), TOU8(range.beginKey), TOU8(range.endKey), chunkSize));
 }
 
 Task<EmptyResult> Transaction::watch(std::string_view key) {
+  KUTRACE_FOLLY_MARKER("fdb::watch");
   co_return co_await EmptyResult::toTask(fdb_transaction_watch(tr_.get(), TOU8(key)));
 }
 
 Task<EmptyResult> Transaction::commit() {
+  KUTRACE_FOLLY_MARKER("fdb::commit");
   if (UNLIKELY(readonly_)) {
     // Prevent tools like admin_cli or fsck from mistakenly modifying data
     XLOGF(CRITICAL, "disallow call commit on a read-only FDBContext!!!");
@@ -258,25 +272,33 @@ Task<EmptyResult> Transaction::onError(fdb_error_t err) {
   co_return co_await EmptyResult::toTask(fdb_transaction_on_error(tr_.get(), err));
 }
 
-void Transaction::clear(std::string_view key) { return fdb_transaction_clear(tr_.get(), TOU8(key)); }
+void Transaction::clear(std::string_view key) {
+  KUTRACE_FOLLY_MARKER("fdb::clear");
+  return fdb_transaction_clear(tr_.get(), TOU8(key));
+}
 
 void Transaction::clearRange(const KeyRangeView &range) {
+  KUTRACE_FOLLY_MARKER("fdb::clearRange");
   fdb_transaction_clear_range(tr_.get(), TOU8(range.beginKey), TOU8(range.endKey));
 }
 
 void Transaction::set(std::string_view key, std::string_view value) {
+  KUTRACE_FOLLY_MARKER("fdb::set");
   fdb_transaction_set(tr_.get(), TOU8(key), TOU8(value));
 }
 
 void Transaction::atomicOp(std::string_view key, std::string_view param, FDBMutationType operationType) {
+  KUTRACE_FOLLY_MARKER("fdb::atomicOp");
   return fdb_transaction_atomic_op(tr_.get(), TOU8(key), TOU8(param), operationType);
 }
 
 [[nodiscard]] fdb_error_t Transaction::getCommittedVersion(int64_t *outVersion) {
+  KUTRACE_FOLLY_MARKER("fdb::getCommittedVersion");
   return fdb_transaction_get_committed_version(tr_.get(), outVersion);
 }
 
 fdb_error_t Transaction::addConflictRange(const KeyRangeView &range, FDBConflictRangeType type) {
+  KUTRACE_FOLLY_MARKER("fdb::addConflictRange");
   return fdb_transaction_add_conflict_range(tr_.get(), TOU8(range.beginKey), TOU8(range.endKey), type);
 }
 

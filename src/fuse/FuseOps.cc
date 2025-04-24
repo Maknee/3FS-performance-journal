@@ -84,6 +84,7 @@ class RequestInfo : public hf3fs::RequestInfo, folly::NonCopyableNonMovable {
 
 template <typename Awaitable>
 auto withRequestInfo(fuse_req_t req, Awaitable &&awaitable) {
+  KUTRACE_FOLLY_MARKER("FuseOps:blockingWait");
   auto guard = RequestInfo::set(req);
   return folly::coro::blockingWait(std::forward<Awaitable>(awaitable));
 }
@@ -229,6 +230,7 @@ void init_entry(struct fuse_entry_param *e, double attr_timeout, double entry_ti
 }
 
 void add_entry(const Inode &inode, struct fuse_entry_param *e) {
+  KUTRACE_FOLLY_MARKER("fuse::add_entry");
   if (e) {
     fillLinuxStat(e->attr, inode);
     e->ino = e->attr.st_ino;
@@ -428,6 +430,24 @@ CoTryTask<ssize_t> flushBuf(const flat::UserInfo &user,
                             const size_t len,
                             bool flushAll) {
   KUTRACE_FOLLY_MARKER("hf3fs::fuse::flushBuf");
+
+#ifdef KUTRACE_RPC_ENABLE
+  auto timestamp = serde::Timestamp{UtcClock::now().time_since_epoch().count()};
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr("0.0.0.0", 0);
+
+    std::string_view method_name = "hf3fs_flush";
+
+    auto start_time = kutrace::RPCLogger::get()->log_client_send(rpcid, 0, client_addr, server_addr, method_name, kutrace::RPCMessage{});
+
+    timestamp.clientCalled = start_time;
+    timestamp.clientSerialized = start_time;
+  }
+#endif
+
   static auto mountName = d.fuseRemountPref.value_or(d.fuseMountpoint).native();
 
   static monitor::LatencyRecorder overallLatency("fuse.piov.overall.write", monitor::TagSet{{"mount_name", mountName}});
@@ -488,6 +508,34 @@ CoTryTask<ssize_t> flushBuf(const flat::UserInfo &user,
   onError.dismiss();
   pi->finishWrite(user, truncateVer, off, done);
 
+#ifdef KUTRACE_RPC_ENABLE
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr("0.0.0.0", 0);
+
+    kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+    std::string method_name = "hf3fs_flush";
+
+    auto current_time = UtcClock::now().time_since_epoch().count();
+    timestamp.serverReceived = current_time;
+    timestamp.serverWaked = current_time;
+    timestamp.serverProcessed = current_time;
+    timestamp.serverSerialized = current_time;
+    timestamp.clientReceived = current_time;
+    timestamp.clientWaked = current_time;
+
+    kutrace::RPCLogger::get()->log_client_recv(
+        rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+        timestamp.clientCalled,
+        timestamp.serverReceived,
+        timestamp.serverSerialized
+    );
+  }
+#endif
+
   co_return done;
 }
 
@@ -497,6 +545,7 @@ ssize_t flushBuf(fuse_req_t req,
                  storage::client::IOBuffer &memh,
                  const size_t len,
                  bool flushAll) {
+  auto kutrace_guard = KUTraceRPCInfo::set_with_cached_rpc_id("flush");
   auto userInfo = UserInfo(flat::Uid(fuse_req_ctx(req)->uid), flat::Gid(fuse_req_ctx(req)->gid), d.fuseToken);
   auto result = withRequestInfo(req, flushBuf(userInfo, pi, off, memh, len, flushAll));
   if (result.hasError()) {
@@ -1475,6 +1524,25 @@ void hf3fs_open(fuse_req_t req, fuse_ino_t fino, struct fuse_file_info *fi) {
 
 void hf3fs_read(fuse_req_t req, fuse_ino_t fino, size_t size, off_t off, struct fuse_file_info *fi) {
   KUTRACE_FOLLY_MARKER("hf3fs_read");
+  auto kutrace_guard = KUTraceRPCInfo::set_with_next_rpc_id("read");
+
+#ifdef KUTRACE_RPC_ENABLE
+  auto timestamp = serde::Timestamp{UtcClock::now().time_since_epoch().count()};
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr("0.0.0.0", 0);
+
+    std::string_view method_name = "hf3fs_read";
+
+    auto start_time = kutrace::RPCLogger::get()->log_client_send(rpcid, 0, client_addr, server_addr, method_name, kutrace::RPCMessage{});
+
+    timestamp.clientCalled = start_time;
+    timestamp.clientSerialized = start_time;
+  }
+#endif
+
   auto ino = real_ino(fino);
 
   XLOGF(OP_LOG_LEVEL, "hf3fs_read(ino={}, size={}, off={}, pid={})", ino, size, off, fuse_req_ctx(req)->pid);
@@ -1552,10 +1620,57 @@ void hf3fs_read(fuse_req_t req, fuse_ino_t fino, size_t size, off_t off, struct 
     XLOGF(OP_LOG_LEVEL, "  read bytes, {}", res[0]);
     fuse_reply_buf(req, (char *)memh.data(), res[0]);
   }
+
+#ifdef KUTRACE_RPC_ENABLE
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr("0.0.0.0", 0);
+
+    kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+    std::string method_name = "hf3fs_read";
+
+    auto current_time = UtcClock::now().time_since_epoch().count();
+    timestamp.serverReceived = current_time;
+    timestamp.serverWaked = current_time;
+    timestamp.serverProcessed = current_time;
+    timestamp.serverSerialized = current_time;
+    timestamp.clientReceived = current_time;
+    timestamp.clientWaked = current_time;
+
+    kutrace::RPCLogger::get()->log_client_recv(
+        rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+        timestamp.clientCalled,
+        timestamp.serverReceived,
+        timestamp.serverSerialized
+    );
+  }
+#endif
 }
 
 void hf3fs_write(fuse_req_t req, fuse_ino_t fino, const char *buf, size_t size, off_t off, struct fuse_file_info *fi) {
   KUTRACE_FOLLY_MARKER("hf3fs_write");
+  auto kutrace_guard = KUTraceRPCInfo::set_with_next_rpc_id("write");
+
+#ifdef KUTRACE_RPC_ENABLE
+  auto timestamp = serde::Timestamp{UtcClock::now().time_since_epoch().count()};
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr("0.0.0.0", 0);
+
+    std::string_view method_name = "hf3fs_write";
+
+    auto start_time = kutrace::RPCLogger::get()->log_client_send(rpcid, 0, client_addr, server_addr, method_name, kutrace::RPCMessage{});
+
+    timestamp.clientCalled = start_time;
+    timestamp.clientSerialized = start_time;
+  }
+#endif
+
   static auto mountName = d.fuseRemountPref.value_or(d.fuseMountpoint).native();
   static monitor::LatencyRecorder writeLatency("fuse.write.latency", monitor::TagSet{{"mount_name", mountName}});
   static monitor::DistributionRecorder writeDist("fuse.write.size", monitor::TagSet{{"mount_name", mountName}});
@@ -1699,10 +1814,38 @@ void hf3fs_write(fuse_req_t req, fuse_ino_t fino, const char *buf, size_t size, 
     KUTRACE_FOLLY_MARKER("hf3fs_write:fuse_reply_write");
     fuse_reply_write(req, size);
   }
+
+#ifdef KUTRACE_RPC_ENABLE
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr("0.0.0.0", 0);
+
+    kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+    std::string method_name = "hf3fs_write";
+
+    auto current_time = UtcClock::now().time_since_epoch().count();
+    timestamp.serverReceived = current_time;
+    timestamp.serverWaked = current_time;
+    timestamp.serverProcessed = current_time;
+    timestamp.serverSerialized = current_time;
+    timestamp.clientReceived = current_time;
+    timestamp.clientWaked = current_time;
+
+    kutrace::RPCLogger::get()->log_client_recv(
+        rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+        timestamp.clientCalled,
+        timestamp.serverReceived,
+        timestamp.serverSerialized
+    );
+  }
+#endif
 }
 
 void hf3fs_fsync(fuse_req_t req, fuse_ino_t fino, int datasync, struct fuse_file_info *fi) {
-  KUTRACE_FOLLY_MARKER("hf3fs_sync");
+  KUTRACE_FOLLY_MARKER("hf3fs_fsync");
   XLOGF(DBG, "fsync called");
   XLOGF(OP_LOG_LEVEL, "hf3fs_sync(ino={}, datasync={}, pid={})", fino, datasync, fuse_req_ctx(req)->pid);
   if (datasync) {
@@ -1749,6 +1892,7 @@ void hf3fs_flush(fuse_req_t req, fuse_ino_t fino, struct fuse_file_info *fi) {
 }
 
 void hf3fs_release(fuse_req_t req, fuse_ino_t fino, struct fuse_file_info *fi) {
+  KUTRACE_FOLLY_MARKER("hf3fs_release");
   auto ino = real_ino(fino);
   d.dirtyInodes.lock()->erase(ino);
 
@@ -1912,6 +2056,7 @@ void hf3fs_create(fuse_req_t req, fuse_ino_t fparent, const char *name, mode_t m
     // fi->direct_io = 1;  // newly created file, has to write, or read from remote
     fi->fh = (uintptr_t)(new FileHandle{ptr, (bool)(fi->flags & O_DIRECT), session});
     XLOGF(DBG, "{}created in o direct mode", fi->flags & O_DIRECT ? "" : "not ");
+    KUTRACE_FOLLY_MARKER("fuse_reply_create");
     fuse_reply_create(req, &e, fi);
   }
 }
@@ -2635,6 +2780,7 @@ CoTryTask<uint64_t> RcInode::beginWrite(flat::UserInfo userInfo,
                                         meta::client::MetaClient &meta,
                                         uint64_t offset,
                                         uint64_t length) {
+  KUTRACE_FOLLY_MARKER("RcInode::beginWrite");
   auto stripe = std::min((uint32_t)folly::divCeil(offset + length, (uint64_t)inode.asFile().layout.chunkSize),
                          inode.asFile().layout.stripeSize);
   {

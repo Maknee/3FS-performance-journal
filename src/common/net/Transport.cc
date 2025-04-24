@@ -26,6 +26,7 @@
 #include "common/utils/Coroutine.h"
 #include "common/utils/Result.h"
 #include "common/utils/Size.h"
+#include "kutrace_userlib/kutrace_rpc_logger.h"
 
 namespace hf3fs::net {
 namespace {
@@ -162,6 +163,7 @@ Result<Void> Transport::getPeerCredentials() {
 
 template <uint32_t CheckAndRemove, uint32_t WantToRemove, MethodName Name>
 Transport::Action Transport::tryToSuspend() {
+  KUTRACE_FOLLY_MARKER(fmt::format("Transport::tryToSuspend:{}", Name.string));
   auto flags = flags_.load(std::memory_order_acquire);
   while (true) {
     if (UNLIKELY(flags & kInvalidatedFlag)) {
@@ -183,11 +185,37 @@ Transport::Action Transport::tryToSuspend() {
 }
 
 void Transport::doRead(bool error, bool logError /* = true */) {
+  KUTRACE_FOLLY_MARKER("Transport::doRead");
   lastUsedTime_ = RelativeTime::now();
 
-  auto guard = folly::makeGuard([startTime = std::chrono::steady_clock::now()] {
+#ifdef KUTRACE_RPC_ENABLE
+  auto start = kutrace::RPCLogger::get_current_usec();
+  auto addr = serverAddr();
+#endif
+
+  auto guard = folly::makeGuard([&, startTime = std::chrono::steady_clock::now()] {
     auto elapsed = std::chrono::steady_clock::now() - startTime;
     readCPUTime.addSample(std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
+
+#ifdef KUTRACE_RPC_ENABLE
+    if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+      auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+      kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+      kutrace::NetworkAddress server_addr(addr.ip, addr.port);
+
+      kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+      std::string_view method_name = "Transport::doRead";
+
+      kutrace::RPCLogger::get()->log_client_recv(
+          rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+          start,
+          start,
+          start
+      );
+    }
+#endif
   });
 
   if (UNLIKELY(error)) {
@@ -197,6 +225,7 @@ void Transport::doRead(bool error, bool logError /* = true */) {
 
   flags_ &= ~kReadNewWakedFlag;
   while (true) {
+    KUTRACE_FOLLY_MARKER("Transport::doRead::loop");
     auto result = socket_->recv(folly::MutableByteRange{readBuff_->writableTail(), readBuff_->tailroom()});
     if (UNLIKELY(result.hasError())) {
       XLOGF(WARNING, "transport {} receive failed: {}", describe(), result.error());
@@ -252,9 +281,34 @@ void Transport::doRead(bool error, bool logError /* = true */) {
 }
 
 void Transport::doWrite(bool error, bool logError /* = true */) {
-  auto guard = folly::makeGuard([startTime = std::chrono::steady_clock::now()] {
+  KUTRACE_FOLLY_MARKER("Transport::doWrite");
+#ifdef KUTRACE_RPC_ENABLE
+  auto start = kutrace::RPCLogger::get_current_usec();
+  auto addr = serverAddr();
+#endif
+  auto guard = folly::makeGuard([&, startTime = std::chrono::steady_clock::now()] {
     auto elapsed = std::chrono::steady_clock::now() - startTime;
     doWriteCPUTime.addSample(std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());
+
+#ifdef KUTRACE_RPC_ENABLE
+    if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+      auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+      kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+      kutrace::NetworkAddress server_addr(addr.ip, addr.port);
+
+      kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+      std::string_view method_name = "Transport::doWrite";
+
+      kutrace::RPCLogger::get()->log_client_recv(
+          rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+          start,
+          start,
+          start
+      );
+    }
+#endif
   });
 
   if (UNLIKELY(error)) {
@@ -298,6 +352,7 @@ void Transport::doWrite(bool error, bool logError /* = true */) {
 }
 
 Transport::Action Transport::writeAll() {
+  KUTRACE_FOLLY_MARKER("Transport::writeAll");
   auto guard = folly::makeGuard([startTime = std::chrono::steady_clock::now()] {
     auto elapsed = std::chrono::steady_clock::now() - startTime;
     writeAllCPUTime.addSample(std::chrono::duration_cast<std::chrono::microseconds>(elapsed).count());

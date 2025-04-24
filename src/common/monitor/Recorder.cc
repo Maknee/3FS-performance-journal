@@ -72,6 +72,7 @@ CountRecorderWithTLSTag<ThreadLocalTag>::CountRecorderWithTLSTag(std::string_vie
 
 template <class ThreadLocalTag>
 void CountRecorderWithTLSTag<ThreadLocalTag>::addSample(int64_t val, const TagSet &tag) {
+  KUTRACE_FOLLY_MARKER("CountRecorderWithTLSTag::addSample");
   getRecoderWithTag(tag)->addSample(val);
 }
 
@@ -159,7 +160,10 @@ void DistributionRecorder::collect(std::vector<Sample> &samples) {
   }
 }
 
-void DistributionRecorder::addSample(double val, const TagSet &tag) { getRecoderWithTag(tag)->addSample(val); }
+void DistributionRecorder::addSample(double val, const TagSet &tag) {
+  KUTRACE_FOLLY_MARKER("DistributionRecorder::addSample");
+  getRecoderWithTag(tag)->addSample(val);
+}
 
 void DistributionRecorder::logPer30s(const folly::TDigest &digest) {
   XLOGF(DBG3,
@@ -225,6 +229,7 @@ void SimpleDistributionRecorder::collect(std::vector<Sample> &samples) {
 void SimpleDistributionRecorder::addSample(int64_t val, const TagSet &tag) { getRecoderWithTag(tag)->addSample(val); }
 
 void LatencyRecorder::addSample(std::chrono::nanoseconds duration, const TagSet &tag) {
+  KUTRACE_FOLLY_MARKER("LatencyRecorder::addSample");
   getRecoderWithTag(tag)->addSample(duration);
 }
 

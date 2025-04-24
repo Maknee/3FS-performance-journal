@@ -41,9 +41,9 @@ struct ReqBase {
   SERDE_STRUCT_FIELD(client, ClientId{Uuid::zero()});
   SERDE_STRUCT_FIELD(forward, flat::NodeId(0));
   SERDE_STRUCT_FIELD(uuid, Uuid::zero());
-#ifdef KUTRACE_RPC_ENABLE
-  SERDE_STRUCT_FIELD(rpcId, uint32_t(0)); // Add rpcId field
-#endif
+// #ifdef KUTRACE_RPC_ENABLE
+//   SERDE_STRUCT_FIELD(rpcId, uint32_t(0)); // Add rpcId field
+// #endif
 //   SERDE_STRUCT_FIELD(clientReqSendTime, int64_t(0)); // Add client send time field (usec)
 // #endif
 
@@ -60,10 +60,10 @@ struct ReqBase {
     if (currentClientId()) {
       client = *currentClientId();
     }
-#ifdef KUTRACE_RPC_ENABLE
-    static std::atomic<uint64_t> incrementRpcId = 0;
-    rpcId = incrementRpcId.fetch_add(1, std::memory_order_relaxed);
-#endif
+// #ifdef KUTRACE_RPC_ENABLE
+//     static std::atomic<uint64_t> incrementRpcId = 0;
+//     rpcId = incrementRpcId.fetch_add(1, std::memory_order_relaxed);
+// #endif
   }
 
   Result<Void> checkUuid() const {

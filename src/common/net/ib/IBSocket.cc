@@ -611,6 +611,28 @@ Result<size_t> IBSocket::send(folly::ByteRange buf) {
   KUTRACE_FOLLY_MARKER("IBSocket::send");
   RETURN_ON_ERROR(checkState());
 
+#ifdef KUTRACE_RPC_ENABLE
+  auto start = SteadyClock::now().time_since_epoch().count();
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    auto addr = peerIP().toSockAddr();
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    std::string_view method_name = "IBSocket::send";
+
+    start = kutrace::RPCLogger::get()->log_client_send(
+      rpcid,
+      0,
+      client_addr,
+      server_addr,
+      method_name,
+      kutrace::RPCMessage{}
+    );
+  }
+#endif
+
   if (sendWaitBufBegin_ && !sendBufs_.empty()) {
     // record wait send buf latency
     auto begin = sendWaitBufBegin_.exchange(0);
@@ -648,10 +670,54 @@ Result<size_t> IBSocket::send(folly::ByteRange buf) {
     sendWaitBufBegin_.compare_exchange_strong(zero, now);
   }
 
+#ifdef KUTRACE_RPC_ENABLE
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    auto addr = peerIP().toSockAddr();
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+    std::string_view method_name = "IBSocket::send";
+
+    kutrace::RPCLogger::get()->log_client_recv(
+        rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+        start,
+        start,
+        start
+    );
+  }
+#endif
+
   return total;
 }
 
 Result<Void> IBSocket::flush() {
+  KUTRACE_FOLLY_MARKER("IBSocket::flush");
+#ifdef KUTRACE_RPC_ENABLE
+  auto start = SteadyClock::now().time_since_epoch().count();
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    auto addr = peerIP().toSockAddr();
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    std::string_view method_name = "IBSocket::flush";
+
+    start = kutrace::RPCLogger::get()->log_client_send(
+      rpcid,
+      0,
+      client_addr,
+      server_addr,
+      method_name,
+      kutrace::RPCMessage{}
+    );
+  }
+#endif
+
   if (!sendBufs_.empty() && sendBufs_.front().second.size() != sendBufs_.getBufSize()) {
     auto [sendBufIdx, sendBuf] = sendBufs_.front();
     auto size = sendBufs_.getBufSize() - sendBuf.size();
@@ -660,11 +726,56 @@ Result<Void> IBSocket::flush() {
       return makeError(RPCCode::kSendFailed, "IBSocket failed to post send.");
     }
   }
+
+#ifdef KUTRACE_RPC_ENABLE
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    auto addr = peerIP().toSockAddr();
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+    std::string_view method_name = "IBSocket::flush";
+
+    kutrace::RPCLogger::get()->log_client_recv(
+        rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+        start,
+        start,
+        start
+    );
+  }
+#endif
+  
   return Void{};
 }
 
 Result<size_t> IBSocket::recv(folly::MutableByteRange buf) {
   KUTRACE_FOLLY_MARKER("IBSocket::recv");
+
+#ifdef KUTRACE_RPC_ENABLE
+  auto start = SteadyClock::now().time_since_epoch().count();
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    auto addr = peerIP().toSockAddr();
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    std::string_view method_name = "IBSocket::recv";
+
+    start = kutrace::RPCLogger::get()->log_client_send(
+      rpcid,
+      0,
+      client_addr,
+      server_addr,
+      method_name,
+      kutrace::RPCMessage{}
+    );
+  }
+#endif
+
   size_t total = 0;
   while (!recvBufs_.empty()) {
     if (buf.empty()) {
@@ -697,6 +808,27 @@ Result<size_t> IBSocket::recv(folly::MutableByteRange buf) {
       }
     }
   }
+
+#ifdef KUTRACE_RPC_ENABLE
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    auto addr = peerIP().toSockAddr();
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+    std::string_view method_name = "IBSocket::send";
+
+    kutrace::RPCLogger::get()->log_client_recv(
+        rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+        start,
+        start,
+        start
+    );
+  }
+#endif
 
   if (LIKELY(total)) {
     return total;

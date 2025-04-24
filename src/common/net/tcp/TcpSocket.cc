@@ -59,6 +59,29 @@ Result<TcpSocket::Events> TcpSocket::poll(uint32_t events) {
 
 Result<size_t> TcpSocket::recv(folly::MutableByteRange buf) {
   KUTRACE_FOLLY_MARKER("TcpSocket::recv");
+
+#ifdef KUTRACE_RPC_ENABLE
+  auto start = SteadyClock::now().time_since_epoch().count();
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    auto addr = peerIP().toSockAddr();
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    std::string_view method_name = "TcpSocket::recv";
+
+    start = kutrace::RPCLogger::get()->log_client_send(
+      rpcid,
+      0,
+      client_addr,
+      server_addr,
+      method_name,
+      kutrace::RPCMessage{}
+    );
+  }
+#endif
+
   size_t readSize = 0;
   while (!buf.empty()) {
     int ret = ::read(fd_, buf.data(), buf.size());
@@ -78,6 +101,28 @@ Result<size_t> TcpSocket::recv(folly::MutableByteRange buf) {
       return makeError(RPCCode::kSocketError);
     }
   }
+
+#ifdef KUTRACE_RPC_ENABLE
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    auto addr = peerIP().toSockAddr();
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+    std::string_view method_name = "TcpSocket::recv";
+
+    kutrace::RPCLogger::get()->log_client_recv(
+        rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+        start,
+        start,
+        start
+    );
+  }
+#endif
+
   return readSize;
 }
 
@@ -97,6 +142,30 @@ static void updateIOVec(struct iovec iov[], uint32_t len, uint32_t &begin, size_
 
 Result<size_t> TcpSocket::send(struct iovec iov[], uint32_t len) {
   KUTRACE_FOLLY_MARKER("TcpSocket::send");
+
+#ifdef KUTRACE_RPC_ENABLE
+  auto start = SteadyClock::now().time_since_epoch().count();
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    auto addr = peerIP().toSockAddr();
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    std::string_view method_name = "TcpSocket::send";
+
+    start = kutrace::RPCLogger::get()->log_client_send(
+      rpcid,
+      0,
+      client_addr,
+      server_addr,
+      method_name,
+      kutrace::RPCMessage{}
+    );
+  }
+#endif
+
+
   size_t writeSize = 0;
   uint32_t begin = 0;
 
@@ -124,6 +193,28 @@ Result<size_t> TcpSocket::send(struct iovec iov[], uint32_t len) {
       return makeError(RPCCode::kSocketError);
     }
   }
+
+#ifdef KUTRACE_RPC_ENABLE
+  if (kutrace::RPCLogger::get() && KUTraceRPCInfo::get()) {
+    auto rpcid = KUTraceRPCInfo::get()->rpc_id;
+
+    auto addr = peerIP().toSockAddr();
+    kutrace::NetworkAddress client_addr("0.0.0.0", 0);
+    kutrace::NetworkAddress server_addr(addr.sin_addr.s_addr, addr.sin_port);
+
+    kutrace::RPCStatus status = kutrace::RPCStatus::Success;
+
+    std::string_view method_name = "TcpSocket::send";
+
+    kutrace::RPCLogger::get()->log_client_recv(
+        rpcid, 0, client_addr, server_addr, method_name, status, kutrace::RPCMessage{},
+        start,
+        start,
+        start
+    );
+  }
+#endif
+
   return writeSize;
 }
 

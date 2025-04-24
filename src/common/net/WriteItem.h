@@ -128,6 +128,7 @@ struct WriteItem {
 
   template <serde::SerdeType T>
   static auto createMessage(const T &packet, const CoreRequestOptions &options) {
+    KUTRACE_FOLLY_MARKER("WriteItem::createMessage");
     auto item = Pool::get();
     item->buf = SerdeBuffer::create(packet, options);
     item->maxRetryTimes = options.sendRetryTimes;

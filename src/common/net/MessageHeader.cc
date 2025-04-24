@@ -13,10 +13,12 @@ void freeFunction(void *buf, void *userData) {
 }  // namespace
 
 IOBufPtr MessageWrapper::allocate(size_t size) {
+  KUTRACE_FOLLY_MARKER("MessageWrapper::allocate");
   return IOBuf::takeOwnership(InnerAllocator::allocate(size), size, 0, 0, freeFunction, reinterpret_cast<void *>(size));
 }
 
 IOBufPtr MessageWrapper::createFromRemain(size_t minSize) {
+  KUTRACE_FOLLY_MARKER("MessageWrapper::createFromRemain");
   if (headerComplete() && minSize < messageLength()) {
     minSize = messageLength();
   }
