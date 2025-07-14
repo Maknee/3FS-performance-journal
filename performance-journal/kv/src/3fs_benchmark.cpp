@@ -200,11 +200,75 @@ struct Config {
     int fadvise_mode = POSIX_FADV_NORMAL; // Default fadvise mode
     bool kutrace = false;
     int kutrace_control = DO_IPC | DO_WRAP;
+    bool kutrace_resolve_symbols = false;
     std::string program_name;
+    bool align_kv_cache = true;     // Whether to align KV cache size to sector boundaries
+    uint64_t sector_size = 512;     // Default sector size for alignment
 };
+
+std::string generate_sortable_filename(const Config& config) {
+    // Convert enum to string
+    std::string mode_str;
+    switch (config.mode) {
+        case BenchmarkMode::USRBIO:
+            mode_str = "usrbio";
+            break;
+        case BenchmarkMode::IO_URING:
+            mode_str = "io_uring";
+            break;
+        case BenchmarkMode::LIBC:
+            mode_str = "libc";
+            break;
+    }
+
+    fs::path output_path = config.output_file;
+    fs::path mount_path = config.mount_point;
+
+    if (!output_path.is_absolute()) {
+        output_path = fs::absolute(output_path);
+    }
+
+    if (!mount_path.is_absolute()) {
+        mount_path = fs::absolute(mount_path);
+    }
+
+    std::string output_str = output_path.string();
+    std::string mount_str = mount_path.string();
+
+    int mounted = 0;
+    if (fs::exists(mount_path) && output_str.find(mount_str) != std::string::npos) {
+        mounted = 1;
+    }
+    
+    // Generate the filename with new ordering
+    return fmt::format("{mode}{write}{read}_threads{threads}_cache{cache}_io{depth}_m{mounted}",
+                    //   fmt::arg("prog", config.program_name),
+                      fmt::arg("mode", mode_str),
+                      fmt::arg("write", config.skip_write ? "" : "_write"),
+                      fmt::arg("read", config.skip_read ? "" : "_read"),
+                      fmt::arg("threads", config.num_threads),
+                      fmt::arg("cache", config.kv_cache_size),
+                      fmt::arg("depth", config.io_depth),
+                      fmt::arg("mounted", mounted)
+                      );
+}
+
+std::string generate_sortable_filename_trace(const Config& config) {
+    return fmt::format("{}.trace", generate_sortable_filename(config));
+}
 
 void start_kutrace(const Config& config) {
     if (config.kutrace) {
+        auto filename = generate_sortable_filename(config);
+        if (config.kutrace_resolve_symbols) {
+            auto kallsyms_path = fmt::format("{filename}.kallsyms", fmt::arg("filename", filename));
+            if (!fs::exists(kallsyms_path)) {
+                system(fmt::format("sudo cat /proc/kallsyms | sort > {}", kallsyms_path).c_str());
+            }
+            auto proc_maps_path = fmt::format("{filename}.procmaps", fmt::arg("filename", filename));
+            system(fmt::format("sudo ls /proc/self/maps |xargs -I % sh -c 'echo \"\\n====\" %; sudo cat %' > {}", proc_maps_path).c_str());
+        }
+
         kutrace::DoReset(config.kutrace_control);
         kutrace::DoInit(config.program_name.c_str());
         kutrace::DoOn();
@@ -213,9 +277,16 @@ void start_kutrace(const Config& config) {
 
 void stop_kutrace(const Config& config) {
     if (config.kutrace) {
-        char namebuf[256];
-        kutrace::stop(kutrace::MakeTraceFileName(config.program_name.c_str(), namebuf));
+        // char namebuf[256];
+        // kutrace::stop(kutrace::MakeTraceFileName(config.program_name.c_str(), namebuf));
+        kutrace::stop(generate_sortable_filename_trace(config).c_str());
     }
+}
+
+// Function to round up to the nearest multiple of sector size
+uint64_t round_to_sector_size(uint64_t size, uint64_t sector_size) {
+    // Round up to nearest multiple of sector_size
+    return ((size + sector_size - 1) / sector_size) * sector_size;
 }
 
 // Function to check if io_uring is available
@@ -517,7 +588,6 @@ void benchmark_read_3fs(const Config& config) {
     std::atomic<size_t> completed_lines = 0;
     std::atomic<size_t> completed_ops = 0;
     std::atomic<size_t> error_count = 0;
-    std::atomic<size_t> total_reads_submitted = 0;
 
     // Shared latency stats collectors
     LatencyStats op_latency_stats;
@@ -961,7 +1031,6 @@ void benchmark_read_io_uring(const Config& config) {
     std::atomic<size_t> completed_lines(0);
     std::atomic<size_t> completed_ops(0);
     std::atomic<size_t> error_count(0);
-    std::atomic<size_t> total_reads_submitted(0);
 
     // Shared latency stats collectors
     LatencyStats op_latency_stats;
@@ -1316,7 +1385,7 @@ void benchmark_write_libc(const Config& config, uint64_t num_blocks) {
             kutrace::mark_c("/write");
         }
 
-        if (written == config.block_size) {
+        if (written == static_cast<ssize_t>(config.block_size)) {
             latency_stats.add_latency(start_times[i], end_time);
             completed++;
         } else {
@@ -1557,8 +1626,11 @@ int main(int argc, char* argv[]) {
         ("m,mode", "Benchmark mode (usrbio, io_uring, or libc)", cxxopts::value<std::string>()->default_value("usrbio"))
         ("k,kutrace", "Run KUTrace", cxxopts::value<bool>()->default_value("false"))
         ("kutrace-control", "Number of threads", cxxopts::value<int>()->default_value(std::to_string(DO_IPC | DO_WRAP)))
+        ("kutrace-resolve-symbols", "Resolve symbols in kutrace with samp_k and samp_u", cxxopts::value<bool>()->default_value("false"))
         ("direct-io", "Use O_DIRECT flag to bypass page cache", cxxopts::value<bool>()->default_value("true"))
         ("fadvise", "Set fadvise hint (normal, sequential, random, willneed, dontneed, noreuse)", cxxopts::value<std::string>()->default_value("normal"))
+        ("align-kv", "Align KV cache size to sector boundaries", cxxopts::value<bool>()->default_value("true"))
+        ("sector-size", "Sector size for alignment in bytes", cxxopts::value<uint64_t>()->default_value("512"))
         ("h,help", "Print usage information")
     ;
 
@@ -1593,7 +1665,10 @@ int main(int argc, char* argv[]) {
         config.use_direct_io = result["direct-io"].as<bool>();
         config.kutrace = result["kutrace"].as<bool>();
         config.kutrace_control = result["kutrace-control"].as<int>();
+        config.kutrace_resolve_symbols = result["kutrace-resolve-symbols"].as<bool>();
         config.program_name = argv[0];
+        config.align_kv_cache = result["align-kv"].as<bool>();
+        config.sector_size = result["sector-size"].as<uint64_t>();
 
         // Parse fadvise mode
         std::string fadvise_str = result["fadvise"].as<std::string>();
@@ -1657,7 +1732,7 @@ int main(int argc, char* argv[]) {
         }
 
         // Ensure output file is on 3FS mount point *only* for 3FS modes.
-        if (!config.skip_write && !config.skip_read && (config.mode == BenchmarkMode::USRBIO || config.mode == BenchmarkMode::IO_URING)) {
+        if (!config.skip_write && !config.skip_read) {
             fs::path output_path = config.output_file;
             fs::path mount_path = config.mount_point;
 
@@ -1679,6 +1754,15 @@ int main(int argc, char* argv[]) {
             }
         }
 
+        if (config.align_kv_cache && config.use_direct_io) {
+            uint64_t original_size = config.kv_cache_size;
+            config.kv_cache_size = round_to_sector_size(config.kv_cache_size, config.sector_size);
+            
+            if (original_size != config.kv_cache_size && config.verbose) {
+                std::cout << "KV cache size aligned from " << original_size 
+                        << " to " << config.kv_cache_size << " bytes" << std::endl;
+            }
+        }
     } catch (const std::exception& e) {
         std::cerr << "Error parsing options: " << e.what() << std::endl;
         std::cout << options.help() << std::endl;
@@ -1714,6 +1798,10 @@ int main(int argc, char* argv[]) {
         }
         std::cout << std::endl;
     }
+
+    std::cout << "  KV cache size: " << config.kv_cache_size 
+            << (config.align_kv_cache && config.use_direct_io ? " (aligned to sector size)" : "") 
+            << " bytes" << std::endl;
 
     // Find max hash ID from JSONL file
     uint64_t max_hash_id = find_max_hash_id(config.jsonl_file);
