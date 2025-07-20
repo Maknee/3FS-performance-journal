@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <cstdint>
+#include <cinttypes>
 #include <cstring>
 #include <fstream>
 #include <iostream>
@@ -22,13 +23,23 @@
 #include <cstdlib> // For std::getenv
 #include <algorithm>
 // #include <signal.h>
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+#pragma GCC diagnostic ignored "-Wgnu-zero-variadic-macro-arguments"
+#pragma GCC diagnostic ignored "-Wunused-private-field"
+#pragma GCC diagnostic ignored "-Wc99-extensions"
+#pragma GCC diagnostic ignored "-Wzero-length-array"
+#pragma GCC diagnostic ignored "-Wunused-variable"
+#pragma GCC diagnostic ignored "-Wdeprecated-volatile"
+#include "NanoLogCpp17.h"
+#pragma GCC diagnostic pop
 
 // Fetch it
 // wget https://raw.githubusercontent.com/cameron314/concurrentqueue/refs/heads/master/concurrentqueue.h
 #define KUTRACE_RPC_USE_BACKGROUND_THREAD
 #ifdef KUTRACE_RPC_USE_BACKGROUND_THREAD
 #undef BLOCK_SIZE
-#include "concurrentqueue.h"
+#include "concurrentqueue/concurrentqueue.h"
 #endif
 
 #define KUTRACE_RPC_ENABLE
@@ -737,6 +748,283 @@ private:
     // Get greater of two values
     static int64_t max(int64_t a, int64_t b) {
         return (a >= b) ? a : b;
+    }
+};
+
+// RPCNanoLogger - Uses NanoLog for high-performance text-based RPC logging
+class RPCNanoLogger {
+public:
+    RPCNanoLogger() : m_ready(false) {}
+
+    // Constructor - initializes NanoLog
+    RPCNanoLogger(const std::string& filename) : m_ready(false) {
+        open(filename);
+    }
+    
+    // Destructor
+    ~RPCNanoLogger() {
+        if (m_ready) {
+            NanoLog::sync();
+        }
+    }
+    
+    // Check if logger is ready
+    bool is_ready() const { return m_ready; }
+
+    void open(const std::string_view filename, NanoLog::LogLevel log_level = NanoLog::LogLevel::NOTICE) {
+        NanoLog::setLogFile(filename.data());
+        NanoLog::setLogLevel(log_level);
+        NanoLog::preallocate();
+        m_ready = true;
+    }
+
+    // Client-side logging
+    uint64_t log_client_send(
+        uint32_t rpcid,
+        uint32_t parent,
+        const NetworkAddress& client,
+        const NetworkAddress& server,
+        std::string_view method,
+        const RPCMessage& message
+    ) {
+        if (!m_ready) return 0;
+        
+        int64_t timestamp = get_current_usec();
+        uint8_t lglen = calculate_ten_lg(message.length);
+        
+        NANO_LOG(LogLevel::NOTICE, 
+                "RPC_CLIENT_SEND rpcid=%u parent=%u client=%s server=%s method=%.*s "
+                "timestamp=%" PRId64 " lglen=%u datalength=%u data='%.*s'",
+                rpcid, parent, 
+                client.to_string().c_str(), server.to_string().c_str(),
+                static_cast<int>(std::min(method.length(), size_t(kMaxMethodNameSize))), method.data(),
+                timestamp, lglen, message.length,
+                static_cast<int>(std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize))), 
+                message.data ? reinterpret_cast<const char*>(message.data) : "");
+        
+        return timestamp;
+    }
+    
+    void log_client_recv(
+        uint32_t rpcid,
+        uint32_t parent,
+        const NetworkAddress& client,
+        const NetworkAddress& server,
+        std::string_view method,
+        RPCStatus status,
+        const RPCMessage& message,
+        int64_t req_send_time,
+        int64_t req_rcv_time,
+        int64_t resp_send_time
+    ) {
+        if (!m_ready) return;
+        
+        int64_t resp_rcv_time = get_current_usec();
+        uint8_t lglen1 = 0; // Request length not available here
+        uint8_t lglen2 = calculate_ten_lg(message.length);
+        
+        NANO_LOG(LogLevel::NOTICE,
+                "RPC_CLIENT_RECV rpcid=%u parent=%u client=%s server=%s method=%.*s "
+                "status=%s req_send=%" PRId64 " req_rcv=%" PRId64 " resp_send=%" PRId64 " resp_rcv=%" PRId64 " "
+                "lglen1=%u lglen2=%u datalength=%u data='%.*s'",
+                rpcid, parent,
+                client.to_string().c_str(), server.to_string().c_str(),
+                static_cast<int>(std::min(method.length(), size_t(kMaxMethodNameSize))), method.data(),
+                status_to_string(static_cast<uint32_t>(status)).c_str(),
+                req_send_time, req_rcv_time, resp_send_time, resp_rcv_time,
+                lglen1, lglen2, message.length,
+                static_cast<int>(std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize))),
+                message.data ? reinterpret_cast<const char*>(message.data) : "");
+    }
+    
+    // Server-side logging
+    void log_server_recv(
+        uint32_t rpcid,
+        uint32_t parent,
+        const NetworkAddress& client,
+        const NetworkAddress& server,
+        std::string_view method,
+        const RPCMessage& message,
+        int64_t req_send_time
+    ) {
+        if (!m_ready) return;
+        
+        int64_t req_rcv_time = get_current_usec();
+        uint8_t lglen = calculate_ten_lg(message.length);
+        
+        NANO_LOG(LogLevel::NOTICE,
+                "RPC_SERVER_RECV rpcid=%u parent=%u client=%s server=%s method=%.*s "
+                "req_send=%" PRId64 " req_rcv=%" PRId64 " lglen=%u datalength=%u data='%.*s'",
+                rpcid, parent,
+                client.to_string().c_str(), server.to_string().c_str(),
+                static_cast<int>(std::min(method.length(), size_t(kMaxMethodNameSize))), method.data(),
+                req_send_time, req_rcv_time, lglen, message.length,
+                static_cast<int>(std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize))),
+                message.data ? reinterpret_cast<const char*>(message.data) : "");
+    }
+
+    void log_server_send(
+        uint32_t rpcid,
+        uint32_t parent,
+        const NetworkAddress& client,
+        const NetworkAddress& server,
+        std::string_view method,
+        RPCStatus status,
+        const RPCMessage& message,
+        int64_t req_send_time,
+        int64_t req_rcv_time
+    ) {
+        if (!m_ready) return;
+        
+        int64_t resp_send_time = get_current_usec();
+        uint8_t lglen = calculate_ten_lg(message.length);
+        
+        NANO_LOG(LogLevel::NOTICE,
+                "RPC_SERVER_SEND rpcid=%u parent=%u client=%s server=%s method=%.*s "
+                "status=%s req_send=%" PRId64 " req_rcv=%" PRId64 " resp_send=%" PRId64 " "
+                "lglen=%u datalength=%u data='%.*s'",
+                rpcid, parent,
+                client.to_string().c_str(), server.to_string().c_str(),
+                static_cast<int>(std::min(method.length(), size_t(kMaxMethodNameSize))), method.data(),
+                status_to_string(static_cast<uint32_t>(status)).c_str(),
+                req_send_time, req_rcv_time, resp_send_time,
+                lglen, message.length,
+                static_cast<int>(std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize))),
+                message.data ? reinterpret_cast<const char*>(message.data) : "");
+    }
+    
+    // Generate reports from NanoLog text files
+    static bool generate_text_report(const std::string& nanolog_file, const std::string& text_file) {
+        // For NanoLog, we need to first decompress the log file
+        std::string decompress_cmd = "NanoLogCpp17Decompressor " + nanolog_file + " " + text_file;
+        int result = std::system(decompress_cmd.c_str());
+        return (result == 0);
+    }
+    
+    static bool generate_json_report(const std::string& nanolog_file, const std::string& json_file, const char* title = "RPC Transactions") {
+        // First decompress to a temporary text file
+        std::string temp_file = json_file + ".tmp";
+        if (!generate_text_report(nanolog_file, temp_file)) {
+            return false;
+        }
+        
+        // Parse the text file and convert to JSON format
+        std::ifstream in_file(temp_file);
+        if (!in_file.is_open()) {
+            return false;
+        }
+        
+        std::ofstream out_file(json_file);
+        if (!out_file.is_open()) {
+            in_file.close();
+            return false;
+        }
+        
+        // Write JSON header (simplified version)
+        out_file << "{\n";
+        out_file << " \"Comment\" : \"V4 flat RPCs from NanoLog\",\n";
+        out_file << " \"title\" : \"" << (title ? title : "RPC Transactions") << "\",\n";
+        out_file << " \"events\" : [\n";
+        
+        std::string line;
+        bool first_record = true;
+        
+        while (std::getline(in_file, line)) {
+            // Parse NanoLog text format and extract RPC information
+            if (line.find("RPC_CLIENT_RECV") != std::string::npos) {
+                if (!first_record) {
+                    out_file << ",\n";
+                }
+                // Parse the log line and format as JSON
+                // This is a simplified version - full implementation would parse all fields
+                out_file << "  [\"" << line << "\"]";
+                first_record = false;
+            }
+        }
+        
+        if (!first_record) {
+            out_file << "\n";
+        }
+        out_file << "  ]\n}\n";
+        
+        in_file.close();
+        out_file.close();
+        
+        // Clean up temporary file
+        std::remove(temp_file.c_str());
+        return true;
+    }
+    
+    // Flush pending log messages
+    void sync() {
+        if (m_ready) {
+            NanoLog::sync();
+        }
+    }
+    
+    // Get NanoLog statistics
+    std::string get_stats() {
+        return NanoLog::getStats();
+    }
+    
+    // Print NanoLog configuration
+    void print_config() {
+        NanoLog::printConfig();
+    }
+    
+    // Helper to get current time in microseconds
+    static int64_t get_current_usec() {
+        struct timeval tv;
+        gettimeofday(&tv, NULL);
+        return (int64_t)tv.tv_sec * 1000000 + tv.tv_usec;
+    }
+    
+    // Helper to calculate 10 * log2(x)
+    static uint8_t calculate_ten_lg(uint32_t x) {
+        if (x == 0) return 0;
+        
+        // Calculate floor(log2(x))
+        int32_t floorLog2 = 0;
+        uint32_t temp = x;
+        while (temp > 1) {
+            temp >>= 1;
+            floorLog2++;
+        }
+        
+        // Calculate 10 * log2(x) - simplified approach
+        double exactLog2 = log2(x);
+        return static_cast<uint8_t>(exactLog2 * 10.0 + 0.5); // Round to nearest integer
+    }
+
+#ifdef KUTRACE_RPC_ENABLE
+    static RPCNanoLogger* get() {
+        static RPCNanoLogger logger;
+        const char* rpc_file = std::getenv("HF3FS_ENABLE_RPC_NANOLOG_FILE");
+        if (rpc_file) {
+            if (!logger.is_ready()) {
+                logger.open(rpc_file);
+            }
+            return &logger;
+        }
+        return nullptr;
+    }
+#endif
+
+private:
+    std::atomic<bool> m_ready = false;
+    
+    // Convert status to string (reuse from RPCLogger)
+    static std::string status_to_string(uint32_t status_val) {
+        if (status_val < static_cast<uint32_t>(RPCStatus::NumStatus)) {
+            RPCStatus status = static_cast<RPCStatus>(status_val);
+            switch (status) {
+                case RPCStatus::Success: return "Success";
+                case RPCStatus::Fail: return "Fail";
+                case RPCStatus::TooBusy: return "TooBusy";
+                default: return "Unknown";
+            }
+        }
+        return "Status " + std::to_string(status_val);
     }
 };
 

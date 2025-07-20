@@ -86,6 +86,57 @@ include(cmake/CompileFlags.cmake)
 store_compile_flags()
 add_subdirectory("third_party/fmt" EXCLUDE_FROM_ALL)
 restore_compile_flags()
+
+# Add NanoLog - high performance nanosecond scale logging (Maknee fork)
+store_compile_flags()
+include(FetchContent)
+FetchContent_Declare(
+    nanolog
+    GIT_REPOSITORY https://github.com/Maknee/NanoLog.git
+    GIT_TAG master
+    GIT_SUBMODULES_RECURSE YES
+)
+set(BUILD_TESTING OFF CACHE BOOL "Disable NanoLog tests" FORCE)
+FetchContent_MakeAvailable(nanolog)
+
+# Disable warnings for NanoLog target specifically
+if(TARGET NanoLog)
+    target_compile_options(NanoLog PRIVATE -Wno-error -Wno-unused-parameter)
+    # Make NanoLog headers globally available for kutrace_rpc_logger.h
+    get_target_property(NANOLOG_INCLUDE_DIRS NanoLog INTERFACE_INCLUDE_DIRECTORIES)
+    if(NANOLOG_INCLUDE_DIRS)
+        include_directories(${NANOLOG_INCLUDE_DIRS})
+    endif()
+    
+    # Create an interface library that wraps NanoLog with proper warning suppression
+    add_library(nanolog_wrapped INTERFACE)
+    target_link_libraries(nanolog_wrapped INTERFACE NanoLog)
+    target_compile_options(nanolog_wrapped INTERFACE -Wno-unused-parameter)
+    
+    # Make the wrapped version available
+    add_library(nanolog ALIAS nanolog_wrapped)
+endif()
+
+restore_compile_flags()
+
+# Add concurrent queue - lock-free multi-producer, multi-consumer queue
+FetchContent_Declare(
+    concurrentqueue
+    GIT_REPOSITORY https://github.com/cameron314/concurrentqueue.git
+    GIT_TAG master
+)
+FetchContent_MakeAvailable(concurrentqueue)
+
+# Create an interface library for concurrentqueue (header-only)
+store_compile_flags()
+add_library(concurrentqueue::concurrentqueue INTERFACE IMPORTED)
+# Set up include directory to match the expected path structure
+file(MAKE_DIRECTORY ${CMAKE_BINARY_DIR}/concurrentqueue)
+file(COPY ${concurrentqueue_SOURCE_DIR}/concurrentqueue.h 
+     DESTINATION ${CMAKE_BINARY_DIR}/concurrentqueue/)
+target_include_directories(concurrentqueue::concurrentqueue INTERFACE ${CMAKE_BINARY_DIR})
+restore_compile_flags()
+
 set(ZSTD_BUILD_STATIC ON)
 add_subdirectory("third_party/zstd/build/cmake" EXCLUDE_FROM_ALL)
 set(zstd_INCLUDE_DIRS "${PROJECT_SOURCE_DIR}/third_party/zstd/lib")
