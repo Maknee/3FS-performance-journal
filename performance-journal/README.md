@@ -40,6 +40,7 @@ sudo mkdir /3fs/stage/fuse
 sudo chown -R $USER /3fs/stage/fuse
 
 echo "Test!!!" > /3fs/stage/fuse/aaa
+
 cat /3fs/stage/fuse/aaa
 
 ```
@@ -138,7 +139,7 @@ On google-chrome go to http://localhost:8082/ and browse
 
 ## Profiling
 
-```
+```sh
 cd /proj/sdcs-PG0/3fs/3FS-performance-journal/
 cp dumplogfile4 /proj/sdcs-PG0/3fs/3FS-performance-journal
 cp d3.v4.min.js /proj/sdcs-PG0/3fs/3FS-performance-journal
@@ -147,7 +148,22 @@ cp show_rpc.html /proj/sdcs-PG0/3fs/3FS-performance-journal
 cd /proj/sdcs-PG0/3fs/3FS-performance-journal
 ./dumplogfile4 -req "Benchmarking 3FS" log.bin > log.json
 ./makeself show_rpc.html log.json /proj/sdcs-PG0/3fs/3FS-performance-journal/performance-journal/kv/log.html
+
 ./makeself show_rpc.html log.json log.html
 
 
 ```
+
+## Building 3fs local without tests
+
+```sh
+cmake --build build -j -t hf3fs_fuse_main
+```
+
+```sh
+cp build/_deps/nanolog-build/decompressor .
+./decompressor decompress /ssd/nanolog.bin  
+./decompressor decompressJson /ssd/nanolog.bin --pretty
+```
+
+
