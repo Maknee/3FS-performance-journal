@@ -147,6 +147,35 @@ PYBIND11_MODULE(hf3fs_py_usrbio, m) {
            py::arg("hf3fs_mount_point"),
            py::arg("block_size") = 0,
            py::arg("numa") = -1)
+      .def(py::init([](const char *hf3fs_mount_point,
+                       size_t size,
+                       size_t block_size = 0,
+                       int numa = -1) {
+             std::shared_ptr<Hf3fsIovWithRes> iov(new Hf3fsIovWithRes{}, [](auto p) {
+               hf3fs_iovdestroy(p);
+               delete p;
+             });
+
+             auto res = hf3fs_iovcreate(iov.get(), hf3fs_mount_point, size, block_size, numa);
+             if (res < 0) {
+               throw OSException{-res};
+             }
+
+             return iov;
+           }),
+           py::arg("hf3fs_mount_point"),
+           py::arg("size"),
+           py::arg("block_size") = 0,
+           py::arg("numa") = -1,
+           R"(
+        创建一个新的 iovec，分配指定大小的共享内存
+
+        Args:
+          hf3fs_mount_point: hf3fs挂载点路径
+          size: 分配的内存大小（字节）
+          block_size: 块大小，默认为0
+          numa: NUMA节点，默认为-1（不绑定特定节点）
+       )")
       .def(
           "slice_by",
           [](const std::shared_ptr<Hf3fsIovWithRes> &self, py::buffer buf) {
