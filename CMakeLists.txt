@@ -29,6 +29,8 @@ endif()
 
 option(OVERRIDE_CXX_NEW_DELETE "Override C++ new/delete operator" OFF)
 option(SAVE_ALLOCATE_SIZE "Use more memory to save allocate size" OFF)
+option(BUILD_TESTS "Build test suite" OFF)
+option(BUILD_BENCHMARKS "Build benchmark suite" OFF)
 
 option(ENABLE_FUSE_APPLICATION "" ON)
 
@@ -44,6 +46,8 @@ if (OVERRIDE_CXX_NEW_DELETE)
     endif()
 endif()
 message (STATUS "SAVE_ALLOCATE_SIZE: ${SAVE_ALLOCATE_SIZE}")
+message (STATUS "BUILD_TESTS: ${BUILD_TESTS}")
+message (STATUS "BUILD_BENCHMARKS: ${BUILD_BENCHMARKS}")
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED OFF)
@@ -62,10 +66,15 @@ if (CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
     set(USE_LIBCXX OFF)
 elseif (CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fcoroutines")
+    # Enable GNU variadic macro extensions for proper ##__VA_ARGS__ support
+    set (CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Wno-variadic-macros")
 endif()
 
 # Remove project root from the __FILE__ macro variable
 add_compile_options(-fmacro-prefix-map=${CMAKE_SOURCE_DIR}=.)
+
+# Enable GNU variadic macro extensions for ##__VA_ARGS__ support across all compilers
+add_compile_options(-Wno-gnu-zero-variadic-macro-arguments)
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
     add_compile_options(-msse4.2 -mavx2)
@@ -97,6 +106,7 @@ FetchContent_Declare(
     GIT_SUBMODULES_RECURSE YES
 )
 set(BUILD_TESTING OFF CACHE BOOL "Disable NanoLog tests" FORCE)
+set(BUILD_DECOMPRESSOR ON CACHE BOOL "Build NanoLog decompressor" FORCE)
 FetchContent_MakeAvailable(nanolog)
 
 # Disable warnings for NanoLog target specifically
@@ -229,5 +239,11 @@ include(cmake/AddCrate.cmake)
 configure_file(cmake/CTestCustom.cmake ${CMAKE_BINARY_DIR} @ONLY)
 
 add_subdirectory(src)
-add_subdirectory(tests)
-add_subdirectory(benchmarks)
+
+if(BUILD_TESTS)
+    add_subdirectory(tests)
+endif()
+
+if(BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()

@@ -22,6 +22,12 @@
 #include <atomic>
 #include <cstdlib> // For std::getenv
 #include <algorithm>
+#include <thread>
+#include <chrono>
+#include <thread>
+#include <chrono>
+#include <filesystem>
+
 // #include <signal.h>
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wunused-parameter"
@@ -36,13 +42,38 @@
 
 // Fetch it
 // wget https://raw.githubusercontent.com/cameron314/concurrentqueue/refs/heads/master/concurrentqueue.h
-#define KUTRACE_RPC_USE_BACKGROUND_THREAD
-#ifdef KUTRACE_RPC_USE_BACKGROUND_THREAD
+
+// Runtime environment variable checks with caching
+namespace kutrace {
+    inline bool use_rpc_background_thread() {
+        static bool cached = false;
+        static bool result = false;
+        if (!cached) {
+            const char* env_val = std::getenv("KUTRACE_RPC_USE_BACKGROUND_THREAD");
+            result = (env_val != nullptr && std::string(env_val) != "0" && std::string(env_val) != "false");
+            cached = true;
+        }
+        return result;
+    }
+    
+    inline bool use_nanolog_background_thread() {
+        static bool cached = false;
+        static bool result = false;
+        if (!cached) {
+            const char* env_val = std::getenv("KUTRACE_NANOLOG_USE_BACKGROUND_THREAD");
+            result = (env_val != nullptr && std::string(env_val) != "0" && std::string(env_val) != "false");
+            cached = true;
+        }
+        return result;
+    }
+}
+
+// Always include concurrentqueue since we might need it at runtime
 #undef BLOCK_SIZE
 #include "concurrentqueue/concurrentqueue.h"
-#endif
 
 #define KUTRACE_RPC_ENABLE
+#define KUTRACE_NANOLOG_ENABLE
 
 namespace kutrace {
 
@@ -179,6 +210,13 @@ public:
 
     void open(const std::string& filename, std::size_t batch_size = 10000, std::size_t timeout_ms = 10) {
         std::lock_guard<std::mutex> l(m);
+        
+        // If there's already a worker thread running, stop it first
+        if (use_rpc_background_thread() && worker_thread.joinable()) {
+            m_ready = false;  // Signal the existing thread to stop
+            worker_thread.join();  // Wait for it to finish
+        }
+        
         m_logFile.open(filename, std::ios::out | std::ios::binary | std::ios::trunc);
         if (m_logFile.is_open()) {
             m_ready = true;
@@ -186,8 +224,8 @@ public:
             std::cerr << "Failed to open log file: " << filename << std::endl;
         }
 
-#ifdef KUTRACE_RPC_USE_BACKGROUND_THREAD
-        worker_thread = std::thread([this, batch_size, timeout_ms]() {
+        if (use_rpc_background_thread()) {
+            worker_thread = std::thread([this, batch_size, timeout_ms]() {
 #if defined(__linux__) || defined(__unix__)
             pthread_setname_np(pthread_self(), "RPCLoggerWorker");
 #endif
@@ -213,8 +251,8 @@ public:
                     // should_flush.store(true, std::memory_order_relaxed);
                 }
             }
-        });
-#endif        
+            });
+        }        
     }
 
     // Client-side logging
@@ -560,11 +598,10 @@ private:
     std::fstream m_logFile;
     std::atomic<bool> m_ready = false;
     inline static std::mutex m;
-#ifdef KUTRACE_RPC_USE_BACKGROUND_THREAD
+    // Always available for runtime switching
     std::atomic<bool> should_flush = false;
     moodycamel::ConcurrentQueue<BinaryLogRecord> queue;
     std::thread worker_thread;
-#endif
 
     // 2**0.0 through 2**0.9
     static constexpr double kPowerTwoTenths[10] = {
@@ -614,13 +651,13 @@ private:
     // Write record to file
     void write_record(const BinaryLogRecord& record) {
         if (m_ready) {
-#ifdef KUTRACE_RPC_USE_BACKGROUND_THREAD
-            queue.enqueue(record);
-#else
-            std::lock_guard<std::mutex> l(m);
-            m_logFile.write(reinterpret_cast<const char*>(&record), sizeof(BinaryLogRecord));
-            m_logFile.flush();
-#endif
+            if (use_rpc_background_thread()) {
+                queue.enqueue(record);
+            } else {
+                std::lock_guard<std::mutex> l(m);
+                m_logFile.write(reinterpret_cast<const char*>(&record), sizeof(BinaryLogRecord));
+                m_logFile.flush();
+            }
         }
     }
     
@@ -763,7 +800,12 @@ public:
     
     // Destructor
     ~RPCNanoLogger() {
-        if (m_ready) {
+        bool was_ready = m_ready.load();
+        m_ready = false;
+        if (worker_thread.joinable()) {
+            worker_thread.join();
+        }
+        if (was_ready) {
             NanoLog::sync();
         }
     }
@@ -771,11 +813,58 @@ public:
     // Check if logger is ready
     bool is_ready() const { return m_ready; }
 
-    void open(const std::string_view filename, NanoLog::LogLevel log_level = NanoLog::LogLevel::NOTICE) {
+    void open(const std::string_view filename, NanoLog::LogLevel log_level = NanoLog::LogLevel::NOTICE, 
+              std::size_t batch_size = 10000, std::size_t timeout_ms = 10) {
+        
+        // If there's already a worker thread running, stop it first
+        if (use_nanolog_background_thread() && worker_thread.joinable()) {
+            m_ready = false;  // Signal the existing thread to stop
+            worker_thread.join();  // Wait for it to finish
+        }
+        
+        if (std::filesystem::exists(filename)) {
+            std::filesystem::remove(filename);
+        }
         NanoLog::setLogFile(filename.data());
-        NanoLog::setLogLevel(log_level);
         NanoLog::preallocate();
+        NanoLog::setLogLevel(log_level);
+        // NanoLog::sync();
         m_ready = true;
+
+        if (use_nanolog_background_thread()) {
+            worker_thread = std::thread([this, batch_size, timeout_ms]() {
+#if defined(__linux__) || defined(__unix__)
+            pthread_setname_np(pthread_self(), "NanoLogWorker");
+#endif
+            std::vector<LogEntry> batch_entries;
+            batch_entries.resize(batch_size);
+            std::size_t index = 0;
+            auto start = std::chrono::steady_clock::now();
+            
+            while (m_ready) {
+                if (queue.try_dequeue(batch_entries[index])) {
+                    // Process the log entry
+                    process_log_entry(batch_entries[index]);
+                    index++;
+                } else {
+                    // Sleep for a bit
+                    std::this_thread::sleep_for(std::chrono::nanoseconds(500));
+                }
+                
+                auto end = std::chrono::steady_clock::now();
+                auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(end - start);
+                
+                // Flush periodically
+                if (index == batch_size || elapsed.count() > static_cast<long>(timeout_ms)) {
+                    if (index > 0) {
+                        NanoLog::sync();
+                        index = 0;
+                    }
+                    start = end;
+                }
+            }
+            });
+        }        
     }
 
     // Client-side logging
@@ -792,15 +881,46 @@ public:
         int64_t timestamp = get_current_usec();
         uint8_t lglen = calculate_ten_lg(message.length);
         
-        NANO_LOG(LogLevel::NOTICE, 
-                "RPC_CLIENT_SEND rpcid=%u parent=%u client=%s server=%s method=%.*s "
-                "timestamp=%" PRId64 " lglen=%u datalength=%u data='%.*s'",
-                rpcid, parent, 
-                client.to_string().c_str(), server.to_string().c_str(),
-                static_cast<int>(std::min(method.length(), size_t(kMaxMethodNameSize))), method.data(),
-                timestamp, lglen, message.length,
-                static_cast<int>(std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize))), 
-                message.data ? reinterpret_cast<const char*>(message.data) : "");
+        if (use_nanolog_background_thread()) {
+            // Use background thread for better performance
+            LogEntry entry;
+        entry.type = LogEntryType::ClientSend;
+        entry.rpcid = rpcid;
+        entry.parent = parent;
+        entry.client = client;
+        entry.server = server;
+        // Copy method name directly without string operations
+        size_t method_len = std::min(method.length(), size_t(kMaxMethodNameSize - 1));
+        std::memcpy(entry.method, method.data(), method_len);
+        entry.method[method_len] = '\0';  // Null terminate
+        entry.timestamp = timestamp;
+        entry.lglen = lglen;
+        entry.message_length = message.length;
+        // Copy data directly without string operations
+        if (message.data && message.length > 0) {
+            size_t copy_len = std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize - 1));
+            std::memcpy(entry.data, message.data, copy_len);
+            entry.data[copy_len] = '\0';  // Null terminate
+        }
+        
+            queue.enqueue(entry);
+        } else {
+            // Format addresses and status directly to avoid string allocation
+            char client_addr[32], server_addr[32];
+            format_address_direct(client, client_addr, sizeof(client_addr));
+            format_address_direct(server, server_addr, sizeof(server_addr));
+            size_t method_len = std::min(method.length(), size_t(kMaxMethodNameSize));
+            const char* data_str = (message.data && message.length > 0) ? 
+                reinterpret_cast<const char*>(message.data) : "";
+            int data_len = std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize));
+            
+            NANO_LOG(LogLevel::NOTICE, 
+                    "RPC_CLIENT_SEND rpcid=%u parent=%u client=%s server=%s method=%.*s "
+                    "timestamp=%" PRId64 " lglen=%u datalength=%u data='%.*s'",
+                    rpcid, parent, 
+                    client_addr, server_addr, static_cast<int>(method_len), method.data(),
+                    timestamp, lglen, message.length, data_len, data_str);
+        }
         
         return timestamp;
     }
@@ -823,18 +943,52 @@ public:
         uint8_t lglen1 = 0; // Request length not available here
         uint8_t lglen2 = calculate_ten_lg(message.length);
         
-        NANO_LOG(LogLevel::NOTICE,
-                "RPC_CLIENT_RECV rpcid=%u parent=%u client=%s server=%s method=%.*s "
-                "status=%s req_send=%" PRId64 " req_rcv=%" PRId64 " resp_send=%" PRId64 " resp_rcv=%" PRId64 " "
-                "lglen1=%u lglen2=%u datalength=%u data='%.*s'",
-                rpcid, parent,
-                client.to_string().c_str(), server.to_string().c_str(),
-                static_cast<int>(std::min(method.length(), size_t(kMaxMethodNameSize))), method.data(),
-                status_to_string(static_cast<uint32_t>(status)).c_str(),
-                req_send_time, req_rcv_time, resp_send_time, resp_rcv_time,
-                lglen1, lglen2, message.length,
-                static_cast<int>(std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize))),
-                message.data ? reinterpret_cast<const char*>(message.data) : "");
+        if (use_nanolog_background_thread()) {
+            LogEntry entry;
+            entry.type = LogEntryType::ClientRecv;
+        entry.rpcid = rpcid;
+        entry.parent = parent;
+        entry.client = client;
+        entry.server = server;
+        // Copy method name directly without string operations
+        size_t method_len = std::min(method.length(), size_t(kMaxMethodNameSize - 1));
+        std::memcpy(entry.method, method.data(), method_len);
+        entry.method[method_len] = '\0';
+        entry.status = status;
+        entry.req_send_time = req_send_time;
+        entry.req_rcv_time = req_rcv_time;
+        entry.resp_send_time = resp_send_time;
+        entry.resp_rcv_time = resp_rcv_time;
+        entry.lglen1 = lglen1;
+        entry.lglen2 = lglen2;
+        entry.message_length = message.length;
+        // Copy data directly without string operations
+        if (message.data && message.length > 0) {
+            size_t copy_len = std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize - 1));
+            std::memcpy(entry.data, message.data, copy_len);
+            entry.data[copy_len] = '\0';
+        }
+        
+            queue.enqueue(entry);
+        } else {
+            // Format addresses and status directly to avoid string allocation
+            char client_addr[32], server_addr[32];
+            format_address_direct(client, client_addr, sizeof(client_addr));
+            format_address_direct(server, server_addr, sizeof(server_addr));
+            size_t method_len = std::min(method.length(), size_t(kMaxMethodNameSize));
+            const char* status_str = get_status_string_direct(status);
+            const char* data_str = (message.data && message.length > 0) ? 
+                reinterpret_cast<const char*>(message.data) : "";
+            int data_len = std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize));
+            
+            NANO_LOG(LogLevel::NOTICE,
+                    "RPC_CLIENT_RECV rpcid=%u parent=%u client=%s server=%s method=%.*s "
+                    "status=%s req_send=%" PRId64 " req_rcv=%" PRId64 " resp_send=%" PRId64 " resp_rcv=%" PRId64 " "
+                    "lglen1=%u lglen2=%u datalength=%u data='%.*s'",
+                    rpcid, parent, client_addr, server_addr, static_cast<int>(method_len), method.data(),
+                    status_str, req_send_time, req_rcv_time, resp_send_time, resp_rcv_time,
+                    lglen1, lglen2, message.length, data_len, data_str);
+        }
     }
     
     // Server-side logging
@@ -852,15 +1006,45 @@ public:
         int64_t req_rcv_time = get_current_usec();
         uint8_t lglen = calculate_ten_lg(message.length);
         
-        NANO_LOG(LogLevel::NOTICE,
-                "RPC_SERVER_RECV rpcid=%u parent=%u client=%s server=%s method=%.*s "
-                "req_send=%" PRId64 " req_rcv=%" PRId64 " lglen=%u datalength=%u data='%.*s'",
-                rpcid, parent,
-                client.to_string().c_str(), server.to_string().c_str(),
-                static_cast<int>(std::min(method.length(), size_t(kMaxMethodNameSize))), method.data(),
-                req_send_time, req_rcv_time, lglen, message.length,
-                static_cast<int>(std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize))),
-                message.data ? reinterpret_cast<const char*>(message.data) : "");
+        if (use_nanolog_background_thread()) {
+            LogEntry entry;
+            entry.type = LogEntryType::ServerRecv;
+        entry.rpcid = rpcid;
+        entry.parent = parent;
+        entry.client = client;
+        entry.server = server;
+        // Copy method name directly without string operations
+        size_t method_len = std::min(method.length(), size_t(kMaxMethodNameSize - 1));
+        std::memcpy(entry.method, method.data(), method_len);
+        entry.method[method_len] = '\0';
+        entry.req_send_time = req_send_time;
+        entry.req_rcv_time = req_rcv_time;
+        entry.lglen = lglen;
+        entry.message_length = message.length;
+        // Copy data directly without string operations
+        if (message.data && message.length > 0) {
+            size_t copy_len = std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize - 1));
+            std::memcpy(entry.data, message.data, copy_len);
+            entry.data[copy_len] = '\0';
+        }
+        
+            queue.enqueue(entry);
+        } else {
+            // Format addresses directly to avoid string allocation
+            char client_addr[32], server_addr[32];
+            format_address_direct(client, client_addr, sizeof(client_addr));
+            format_address_direct(server, server_addr, sizeof(server_addr));
+            size_t method_len = std::min(method.length(), size_t(kMaxMethodNameSize));
+            const char* data_str = (message.data && message.length > 0) ? 
+                reinterpret_cast<const char*>(message.data) : "";
+            int data_len = std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize));
+            
+            NANO_LOG(LogLevel::NOTICE,
+                    "RPC_SERVER_RECV rpcid=%u parent=%u client=%s server=%s method=%.*s "
+                    "req_send=%" PRId64 " req_rcv=%" PRId64 " lglen=%u datalength=%u data='%.*s'",
+                    rpcid, parent, client_addr, server_addr, static_cast<int>(method_len), method.data(),
+                    req_send_time, req_rcv_time, lglen, message.length, data_len, data_str);
+        }
     }
 
     void log_server_send(
@@ -879,18 +1063,50 @@ public:
         int64_t resp_send_time = get_current_usec();
         uint8_t lglen = calculate_ten_lg(message.length);
         
-        NANO_LOG(LogLevel::NOTICE,
-                "RPC_SERVER_SEND rpcid=%u parent=%u client=%s server=%s method=%.*s "
-                "status=%s req_send=%" PRId64 " req_rcv=%" PRId64 " resp_send=%" PRId64 " "
-                "lglen=%u datalength=%u data='%.*s'",
-                rpcid, parent,
-                client.to_string().c_str(), server.to_string().c_str(),
-                static_cast<int>(std::min(method.length(), size_t(kMaxMethodNameSize))), method.data(),
-                status_to_string(static_cast<uint32_t>(status)).c_str(),
-                req_send_time, req_rcv_time, resp_send_time,
-                lglen, message.length,
-                static_cast<int>(std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize))),
-                message.data ? reinterpret_cast<const char*>(message.data) : "");
+        if (use_nanolog_background_thread()) {
+            LogEntry entry;
+            entry.type = LogEntryType::ServerSend;
+        entry.rpcid = rpcid;
+        entry.parent = parent;
+        entry.client = client;
+        entry.server = server;
+        // Copy method name directly without string operations
+        size_t method_len = std::min(method.length(), size_t(kMaxMethodNameSize - 1));
+        std::memcpy(entry.method, method.data(), method_len);
+        entry.method[method_len] = '\0';
+        entry.status = status;
+        entry.req_send_time = req_send_time;
+        entry.req_rcv_time = req_rcv_time;
+        entry.resp_send_time = resp_send_time;
+        entry.lglen = lglen;
+        entry.message_length = message.length;
+        // Copy data directly without string operations
+        if (message.data && message.length > 0) {
+            size_t copy_len = std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize - 1));
+            std::memcpy(entry.data, message.data, copy_len);
+            entry.data[copy_len] = '\0';
+        }
+        
+            queue.enqueue(entry);
+        } else {
+            // Format addresses and status directly to avoid string allocation
+            char client_addr[32], server_addr[32];
+            format_address_direct(client, client_addr, sizeof(client_addr));
+            format_address_direct(server, server_addr, sizeof(server_addr));
+            size_t method_len = std::min(method.length(), size_t(kMaxMethodNameSize));
+            const char* status_str = get_status_string_direct(status);
+            const char* data_str = (message.data && message.length > 0) ? 
+                reinterpret_cast<const char*>(message.data) : "";
+            int data_len = std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize));
+            
+            NANO_LOG(LogLevel::NOTICE,
+                    "RPC_SERVER_SEND rpcid=%u parent=%u client=%s server=%s method=%.*s "
+                    "status=%s req_send=%" PRId64 " req_rcv=%" PRId64 " resp_send=%" PRId64 " "
+                    "lglen=%u datalength=%u data='%.*s'",
+                    rpcid, parent, client_addr, server_addr, static_cast<int>(method_len), method.data(),
+                    status_str, req_send_time, req_rcv_time, resp_send_time,
+                    lglen, message.length, data_len, data_str);
+        }
     }
     
     // Generate reports from NanoLog text files
@@ -996,7 +1212,7 @@ public:
         return static_cast<uint8_t>(exactLog2 * 10.0 + 0.5); // Round to nearest integer
     }
 
-#ifdef KUTRACE_RPC_ENABLE
+#ifdef KUTRACE_NANOLOG_ENABLE
     static RPCNanoLogger* get() {
         static RPCNanoLogger logger;
         const char* rpc_file = std::getenv("HF3FS_ENABLE_RPC_NANOLOG_FILE");
@@ -1013,20 +1229,145 @@ public:
 private:
     std::atomic<bool> m_ready = false;
     
-    // Convert status to string (reuse from RPCLogger)
-    static std::string status_to_string(uint32_t status_val) {
-        if (status_val < static_cast<uint32_t>(RPCStatus::NumStatus)) {
-            RPCStatus status = static_cast<RPCStatus>(status_val);
-            switch (status) {
-                case RPCStatus::Success: return "Success";
-                case RPCStatus::Fail: return "Fail";
-                case RPCStatus::TooBusy: return "TooBusy";
-                default: return "Unknown";
+    // Background thread support structures (always available for runtime switching)
+    enum class LogEntryType {
+        ClientSend,
+        ClientRecv,
+        ServerRecv,
+        ServerSend
+    };
+    
+    struct LogEntry {
+        LogEntryType type;
+        uint32_t rpcid;
+        uint32_t parent;
+        NetworkAddress client;
+        NetworkAddress server;
+        char method[kMaxMethodNameSize];  // Fixed-size array instead of std::string
+        RPCStatus status = RPCStatus::Success;
+        int64_t timestamp = 0;
+        int64_t req_send_time = 0;
+        int64_t req_rcv_time = 0;
+        int64_t resp_send_time = 0;
+        int64_t resp_rcv_time = 0;
+        uint8_t lglen = 0;
+        uint8_t lglen1 = 0;
+        uint8_t lglen2 = 0;
+        uint32_t message_length = 0;
+        char data[kMaxLogDataSize];  // Fixed-size array instead of std::string
+        
+        // Constructor to initialize arrays
+        LogEntry() {
+            std::memset(method, 0, sizeof(method));
+            std::memset(data, 0, sizeof(data));
+        }
+    };
+    
+    moodycamel::ConcurrentQueue<LogEntry> queue;
+    std::thread worker_thread;
+    
+    void process_log_entry(const LogEntry& entry) {
+        switch (entry.type) {
+            case LogEntryType::ClientSend: {
+                // Format addresses directly to avoid string allocation
+                char client_addr[32], server_addr[32];
+                format_address_direct(entry.client, client_addr, sizeof(client_addr));
+                format_address_direct(entry.server, server_addr, sizeof(server_addr));
+                
+                NANO_LOG(LogLevel::NOTICE, 
+                        "RPC_CLIENT_SEND rpcid=%u parent=%u client=%s server=%s method=%s "
+                        "timestamp=%" PRId64 " lglen=%u datalength=%u data='%s'",
+                        entry.rpcid, entry.parent, client_addr, server_addr,
+                        entry.method, entry.timestamp, entry.lglen, 
+                        entry.message_length, entry.data);
+                break;
+            }
+                
+            case LogEntryType::ClientRecv: {
+                char client_addr[32], server_addr[32];
+                format_address_direct(entry.client, client_addr, sizeof(client_addr));
+                format_address_direct(entry.server, server_addr, sizeof(server_addr));
+                const char* status_str = get_status_string_direct(entry.status);
+                
+                NANO_LOG(LogLevel::NOTICE,
+                        "RPC_CLIENT_RECV rpcid=%u parent=%u client=%s server=%s method=%s "
+                        "status=%s req_send=%" PRId64 " req_rcv=%" PRId64 " resp_send=%" PRId64 " resp_rcv=%" PRId64 " "
+                        "lglen1=%u lglen2=%u datalength=%u data='%s'",
+                        entry.rpcid, entry.parent, client_addr, server_addr, 
+                        entry.method, status_str, entry.req_send_time, entry.req_rcv_time, 
+                        entry.resp_send_time, entry.resp_rcv_time, entry.lglen1, entry.lglen2, 
+                        entry.message_length, entry.data);
+                break;
+            }
+                
+            case LogEntryType::ServerRecv: {
+                char client_addr[32], server_addr[32];
+                format_address_direct(entry.client, client_addr, sizeof(client_addr));
+                format_address_direct(entry.server, server_addr, sizeof(server_addr));
+                
+                NANO_LOG(LogLevel::NOTICE,
+                        "RPC_SERVER_RECV rpcid=%u parent=%u client=%s server=%s method=%s "
+                        "req_send=%" PRId64 " req_rcv=%" PRId64 " lglen=%u datalength=%u data='%s'",
+                        entry.rpcid, entry.parent, client_addr, server_addr,
+                        entry.method, entry.req_send_time, entry.req_rcv_time, 
+                        entry.lglen, entry.message_length, entry.data);
+                break;
+            }
+                
+            case LogEntryType::ServerSend: {
+                char client_addr[32], server_addr[32];
+                format_address_direct(entry.client, client_addr, sizeof(client_addr));
+                format_address_direct(entry.server, server_addr, sizeof(server_addr));
+                const char* status_str = get_status_string_direct(entry.status);
+                
+                NANO_LOG(LogLevel::NOTICE,
+                        "RPC_SERVER_SEND rpcid=%u parent=%u client=%s server=%s method=%s "
+                        "status=%s req_send=%" PRId64 " req_rcv=%" PRId64 " resp_send=%" PRId64 " "
+                        "lglen=%u datalength=%u data='%s'",
+                        entry.rpcid, entry.parent, client_addr, server_addr,
+                        entry.method, status_str, entry.req_send_time, entry.req_rcv_time, 
+                        entry.resp_send_time, entry.lglen, entry.message_length, entry.data);
+                break;
             }
         }
-        return "Status " + std::to_string(status_val);
+    }
+    
+    // Pre-computed status strings for better performance
+    static constexpr const char* status_strings[] = {
+        "Success",
+        "Fail", 
+        "TooBusy"
+    };
+    
+    // Direct formatting for NanoLog - no string allocation
+    static void format_address_direct(const NetworkAddress& addr, char* buffer, size_t buffer_size) {
+        struct in_addr in_addr_obj;
+        in_addr_obj.s_addr = addr.ip;
+        snprintf(buffer, buffer_size, "%s:%u", inet_ntoa(in_addr_obj), addr.port);
+    }
+
+    // Direct status string lookup for NanoLog - no string allocation
+    static const char* get_status_string_direct(RPCStatus status) {
+        uint32_t status_val = static_cast<uint32_t>(status);
+        if (status_val < 3) {
+            return status_strings[status_val];
+        }
+        return "Status "; // Fallback
     }
 };
+
+// Macro for generic logging that works with NanoLog's compile-time requirements
+#ifdef KUTRACE_NANOLOG_ENABLE
+#define KUTRACE_NANOLOG(format, ...) \
+    do { \
+        auto* logger = kutrace::RPCNanoLogger::get(); \
+        if (logger && logger->is_ready()) { \
+            NANO_LOG(LogLevel::NOTICE, format, ##__VA_ARGS__); \
+        } \
+    } while(0)
+#else
+#define KUTRACE_NANOLOG(format, ...) do {} while(0)
+#endif
 
 }
 
