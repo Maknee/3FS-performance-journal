@@ -157,6 +157,7 @@ cd /proj/sdcs-PG0/3fs/3FS-performance-journal
 ## Building 3fs local without tests
 
 ```sh
+cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_C_COMPILER=clang-14 -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_CXX_FLAGS="-ggdb3 -fno-omit-frame-pointer" -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=mold" -DCMAKE_SHARED_LINKER_FLAGS="-fuse-ld=mold" -DCMAKE_MODULE_LINKER_FLAGS="-fuse-ld=mold" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
 cmake --build build -j -t hf3fs_fuse_main
 ```
 
