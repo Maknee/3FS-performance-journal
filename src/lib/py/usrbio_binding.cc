@@ -256,6 +256,50 @@ PYBIND11_MODULE(hf3fs_py_usrbio, m) {
           [](const std::shared_ptr<Hf3fsIovWithRes> &self) { return self->userdata; },
           R"(
         操作对应的 userdata，由 prepare 函数指定
+      )")
+      .def_property_readonly("id",
+                             [](const std::shared_ptr<Hf3fsIovWithRes> &self) {
+                               hf3fs::Uuid uuid;
+                               memcpy(uuid.data, self->id, sizeof(self->id));
+                               return uuid.toHexString();
+                             },
+                             R"(
+        iovec 的唯一标识符，以十六进制字符串形式返回
+      )")
+      .def_property_readonly("mount_point",
+                             [](const std::shared_ptr<Hf3fsIovWithRes> &self) {
+                               return std::string(self->mount_point);
+                             },
+                             R"(
+        hf3fs 挂载点路径
+      )")
+      .def_property_readonly("size",
+                             [](const std::shared_ptr<Hf3fsIovWithRes> &self) {
+                               return self->size;
+                             },
+                             R"(
+        iovec 缓冲区大小（字节）
+      )")
+      .def_property_readonly("block_size",
+                             [](const std::shared_ptr<Hf3fsIovWithRes> &self) {
+                               return self->block_size;
+                             },
+                             R"(
+        块大小，用于对齐优化
+      )")
+      .def_property_readonly("numa",
+                             [](const std::shared_ptr<Hf3fsIovWithRes> &self) {
+                               return self->numa;
+                             },
+                             R"(
+        NUMA 节点绑定，-1 表示未绑定特定节点
+      )")
+      .def_property_readonly("base_ptr",
+                             [](const std::shared_ptr<Hf3fsIovWithRes> &self) {
+                               return (uintptr_t)self->base;
+                             },
+                             R"(
+        缓冲区基地址的指针值（作为整数）
       )");
 
   py::class_<Hf3fsIorWithIovs, std::shared_ptr<Hf3fsIorWithIovs>>(m, "ioring", R"(
