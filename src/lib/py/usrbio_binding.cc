@@ -300,6 +300,18 @@ PYBIND11_MODULE(hf3fs_py_usrbio, m) {
                              },
                              R"(
         缓冲区基地址的指针值（作为整数）
+      )")
+      .def_property_readonly("buffer",
+                             [](const std::shared_ptr<Hf3fsIovWithRes> &self) {
+                               return py::memoryview::from_buffer(
+                                   self->base,
+                                   {self->size},
+                                   {1},
+                                   true  // writable
+                               );
+                             },
+                             R"(
+        返回缓冲区的内存视图，可直接读写底层内存，无数据拷贝
       )");
 
   py::class_<Hf3fsIorWithIovs, std::shared_ptr<Hf3fsIorWithIovs>>(m, "ioring", R"(
