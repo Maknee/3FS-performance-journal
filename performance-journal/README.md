@@ -167,4 +167,30 @@ cp build/_deps/nanolog-build/decompressor .
 ./decompressor decompressJson /ssd/nanolog.bin --pretty
 ```
 
+## Debugging
 
+```sh
+
+~/mambaforge/envs/llm/bin/python setup_hf3fs_utils.py develop
+
+cd performance-journal/
+cd checkpoint_loading/
+export HF3FS_USRBIO_LIB_LOG=DEBUG
+
+~/.cargo/bin/py-spy record --native -o a.trace --format chrometrace -- python benchmark.py     --drop-caches     --hf3fs-mount-point /3fs/stage     --cache_dir /3fs/stage/fuse/hf     --use-usrbio     --direct-sharded-loading     --models deepseek-ai/DeepSeek-R1-Distill-Qwen-32B     --usrbio-block-size 0     --usrbio-chunk-size $((1 << 30))     --runs 1
+```
+
+
+# Building for debug (locally)
+
+```sh
+mkdir -p /ssd/build_ln
+cmake -S . -B build_ln -DCMAKE_CXX_COMPILER=clang++-14 -DCMAKE_C_COMPILER=clang-14 -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-ggdb3 -fno-omit-frame-pointer" -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+cmake --build build_ln -j
+```
+
+# Installing updated python lib before benchmarking
+
+```sh
+CMAKE_BUILD_PARALLEL_LEVEL=`nproc` ~/mambaforge/bin/python /proj/sdcs-PG0/3fs/3FS-performance-journal/setup.py develop
+```
