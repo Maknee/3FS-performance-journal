@@ -1,17 +1,19 @@
-from hf3fs_fuse.io import make_iovec, make_ioring, register_fd, deregister_fd
+from hf3fs_fuse.io import make_iovec, make_ioring, register_fd, deregister_fd, read_file
 from multiprocessing.shared_memory import SharedMemory
 import os
 
+#dd if=/dev/zero of=/3fs/stage/fuse/b count=1 bs=1024
+
 # Create memory for IO
 shm = SharedMemory(size=1024, create=True)
-iov = make_iovec(shm, '/hf3fs-cluster', 0, -1) # shm, mountpoint, blocksize, numa
+iov = make_iovec(shm, '/3fs/stage', 0, -1) # shm, mountpoint, blocksize, numa
 shm.unlink() # shm can be unlinked after make_iovec
 
 # Create ioring for IO
-ior = make_ioring('/hf3fs-cluster', 100, True, 0) # mountpoint, num_entries, for_read, io_depth
+ior = make_ioring('/3fs/stage', 100, True, 0) # mountpoint, num_entries, for_read, io_depth
 
 # Open file
-fd = os.open('/hf3fs-cluster/testread', os.O_RDONLY)
+fd = os.open('/3fs/stage/fuse/b', os.O_RDONLY)
 register_fd(fd) # must register after open to use usrbio
 
 # Read file
@@ -28,3 +30,6 @@ for res in resv:
 # Close file
 deregister_fd(fd) # must deregister before close
 os.close(fd)
+
+result = read_file('/3fs/stage/fuse/aaa', '/3fs/stage')
+print(result)

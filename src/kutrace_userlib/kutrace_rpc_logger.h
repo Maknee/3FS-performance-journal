@@ -946,28 +946,28 @@ public:
         if (use_nanolog_background_thread()) {
             LogEntry entry;
             entry.type = LogEntryType::ClientRecv;
-        entry.rpcid = rpcid;
-        entry.parent = parent;
-        entry.client = client;
-        entry.server = server;
-        // Copy method name directly without string operations
-        size_t method_len = std::min(method.length(), size_t(kMaxMethodNameSize - 1));
-        std::memcpy(entry.method, method.data(), method_len);
-        entry.method[method_len] = '\0';
-        entry.status = status;
-        entry.req_send_time = req_send_time;
-        entry.req_rcv_time = req_rcv_time;
-        entry.resp_send_time = resp_send_time;
-        entry.resp_rcv_time = resp_rcv_time;
-        entry.lglen1 = lglen1;
-        entry.lglen2 = lglen2;
-        entry.message_length = message.length;
-        // Copy data directly without string operations
-        if (message.data && message.length > 0) {
-            size_t copy_len = std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize - 1));
-            std::memcpy(entry.data, message.data, copy_len);
-            entry.data[copy_len] = '\0';
-        }
+            entry.rpcid = rpcid;
+            entry.parent = parent;
+            entry.client = client;
+            entry.server = server;
+            // Copy method name directly without string operations
+            size_t method_len = std::min(method.length(), size_t(kMaxMethodNameSize - 1));
+            std::memcpy(entry.method, method.data(), method_len);
+            entry.method[method_len] = '\0';
+            entry.status = status;
+            entry.req_send_time = req_send_time;
+            entry.req_rcv_time = req_rcv_time;
+            entry.resp_send_time = resp_send_time;
+            entry.resp_rcv_time = resp_rcv_time;
+            entry.lglen1 = lglen1;
+            entry.lglen2 = lglen2;
+            entry.message_length = message.length;
+            // Copy data directly without string operations
+            if (message.data && message.length > 0) {
+                size_t copy_len = std::min(message.length, static_cast<uint32_t>(kMaxLogDataSize - 1));
+                std::memcpy(entry.data, message.data, copy_len);
+                entry.data[copy_len] = '\0';
+            }
         
             queue.enqueue(entry);
         } else {
@@ -1371,6 +1371,8 @@ private:
 
 }
 
+#ifdef KUTRACE_RPC_ENABLE
+
 // For GCC with strict warnings
 #define KUTRACE_FOLLY_MARKER_IMPL(label) \
   kutrace::mark_e(label); \
@@ -1390,8 +1392,6 @@ private:
 #define KUTRACE_FOLLY_MARKER(...) \
   GET_MACRO(__VA_ARGS__, KUTRACE_FOLLY_MARKER_IMPL_ARG, KUTRACE_FOLLY_MARKER_IMPL)(__VA_ARGS__)
 
-#ifdef KUTRACE_RPC_ENABLE
-
 #define KUTRACE_FOLLY_MARKER_RPC_NUM(label) \
     if (KUTraceRPCInfo::get()) { \
         auto rpcid = KUTraceRPCInfo::get()->rpc_id; \
@@ -1399,12 +1399,16 @@ private:
     } else { \
         KUTRACE_FOLLY_MARKER_IMPL(label); \
     }
+
+#define KUTRACE_FOLLY_MARKER_RPC_NUM_ARG(label, arg) \
+    KUTRACE_FOLLY_MARKER_IMPL_ARG(label, arg);
+
 #else
-#define KUTRACE_FOLLY_MARKER_RPC_NUM(label) \
-    KUTRACE_FOLLY_MARKER_IMPL(label);
+#define KUTRACE_FOLLY_MARKER_RPC_NUM(label)
+
+#define KUTRACE_FOLLY_MARKER_RPC_NUM_ARG(label, arg)
+
 #endif
-
-
 
 
 #include <folly/io/async/Request.h>

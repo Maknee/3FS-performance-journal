@@ -407,6 +407,59 @@ PYBIND11_MODULE(hf3fs_py_usrbio, m) {
               userdata: 默认为 None，可以指定一个 Python object，用户需确保该 object 不会被垃圾回收
           )")
       .def(
+          "prepare2",
+          [](const std::shared_ptr<Hf3fsIorWithIovs> &self,
+             const std::shared_ptr<Hf3fsIovWithRes> &iov,
+             bool read,
+             int fd,
+             size_t off,
+             size_t ptr_offset,
+             size_t length,
+             const py::object &userdata) {
+            // Validate that the ptr_offset + length is within the iov bounds
+            if (ptr_offset + length > iov->size) {
+              throw std::out_of_range("ptr_offset + length exceeds iov size");
+            }
+
+            userdata.inc_ref();
+            py::gil_scoped_release gr;
+
+            auto res = hf3fs_prep_io(self.get(),
+                                     (iov->base_iov ? iov->base_iov : iov).get(),
+                                     read,
+                                     (uint8_t*)iov->base + ptr_offset,
+                                     fd,
+                                     off,
+                                     length,
+                                     (void *)userdata.ptr());
+            if (res < 0) {
+              throw OSException{-res};
+            }
+
+            self->iovs[res] = iov;
+            return self;
+          },
+          py::arg("iov"),
+          py::arg("read"),
+          py::arg("fd"),
+          py::arg("off"),
+          py::arg("ptr_offset"),
+          py::arg("length"),
+          py::arg("userdata") = py::none(),
+          R"(
+            通过 ioring 对象请求后台读写任务，允许指定 iov 内的自定义偏移和长度
+            prepare2 调用过后，该读写会加入 usrbio 的后台队列，并随时可能被执行
+
+            Args:
+              iov: 读写使用的 iov，作为整个缓冲区的基础
+              read: True / False，需与 ioring 的参数一致
+              fd: 文件描述符
+              off: 文件读取或写入偏移量
+              ptr_offset: iov 缓冲区内的字节偏移量
+              length: 实际操作的字节长度
+              userdata: 默认为 None，可以指定一个 Python object，用户需确保该 object 不会被垃圾回收
+          )")
+      .def(
           "submit",
           [](const std::shared_ptr<Hf3fsIorWithIovs> &self) {
             py::gil_scoped_release gr;
@@ -486,6 +539,7 @@ PYBIND11_MODULE(hf3fs_py_usrbio, m) {
                   if (!iov) {
                     XLOGF(FATAL, "same cqe {} fetched more than once", cqes[i].index);
                   }
+                  XLOGF(DBG, "cqes[{}] - result {} userdata {}", i, cqes[i].result, (void *)cqes[i].userdata);
                   iov->result = cqes[i].result;
                   iov->userdata = py::reinterpret_borrow<py::object>((PyObject *)cqes[i].userdata);
                   // iov->userdata.dec_ref();

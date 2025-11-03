@@ -11,6 +11,7 @@
 
 #include "common/monitor/Recorder.h"
 #include "common/net/ib/IBDevice.h"
+#include "kutrace_userlib/kutrace_rpc_logger.h"
 #include "memory/common/GlobalMemoryAllocator.h"
 
 namespace hf3fs::net {

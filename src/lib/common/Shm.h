@@ -85,10 +85,10 @@ class ShmBufForIO {
     return buf_->bufStart + off_;
   }
   CoTryTask<storage::client::IOBuffer *> memh(size_t len) const {
-    XLOGF(DBG, "shm buf for io off {} buf ptr {}", off_, (void *)buf_.get());
-    XLOGF(DBG, "shm block size {}", buf_->blockSize);
+    XLOGF(DBG, "shm buf for io len {} off {} buf ptr {} block size {}", len, off_, (void *)buf_.get(),
+          buf_->blockSize);
     if (len && off_ / buf_->blockSize != (off_ + len - 1) / buf_->blockSize) {
-      co_return makeError(StatusCode::kInvalidArg);
+      co_return makeError(StatusCode::kInvalidArg, "invalid io len");
     }
     co_return (co_await buf_->memh(off_)).get();
   }

@@ -503,7 +503,9 @@ Result<Void> IBDevice::updatePort(size_t portNum) const {
 }
 
 ibv_mr *IBDevice::regMemory(void *addr, size_t length, int access) const {
+  KUTRACE_NANOLOG("IBDevice::regMemory %p %lu %d", addr, length, access);
   auto begin = SteadyClock::now();
+  XLOGF(DBG, "IBDevice {} reg_mr, addr {}, length {}, access {}", name(), addr, length, access);
   auto *mr = ibv_reg_mr(pd_.get(), addr, length, access);
   if (UNLIKELY(!mr)) {
     XLOGF(CRITICAL,
