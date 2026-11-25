@@ -1,0 +1,15 @@
+; from benchmark.ini: read bs=4k numjobs=2 iodepth=1
+[global]
+ioengine=io_uring
+direct=1
+bs=4k
+size=10G
+directory=/ssd/
+filename=fio_4k.dat
+runtime=600
+group_reporting=1
+
+[read_bs4k_j02_qd001]
+rw=read
+iodepth=1
+numjobs=2
